@@ -7,14 +7,18 @@ repository = "https://github.com/reine-ishyanami/onebot-forword-rs"
 [dependencies]
 tokio = { version = "1.44.1", features = ["full"] }
 tokio-macros = "2.5.0"
+tokio-stream = "0.1.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9.34"
+serde_json = "1.0.140"
 chrono = "0.4.38"
-env_logger = "0.11.5"
+fern = "0.7.1"
 log = "0.4.22"
-tokio-tungstenite = { version = "0.26.2", features = ["rustls"] }
+tokio-tungstenite = { version = "0.26.2", features = ["rustls", "handshake"] }
 anyhow = "1.0.97"
+toml = "0.8.20"
 
+futures-util = { version = "0.3.28", default-features = false, features = ["sink", "std"] }
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
