@@ -98,6 +98,9 @@ impl WsClient {
                 }
             }
         }
+        // 连接断开，清空WS_CLIENT
+        WS_CLIENT.write().await.writer = None;
+        WS_CLIENT.write().await.user_id = None;
         Ok(())
     }
     /// 处理消息
@@ -121,6 +124,10 @@ impl WsClient {
         }
         if let Ok(resposne) = serde_json::from_str::<model::ApiResponse>(msg) {
             WsServer::response_message(resposne).await?;
+        }
+        if let Ok(api) = serde_json::from_str::<model::TestMessage>(msg) {
+            let str = serde_json::to_string(&api.extra)?;
+            WsServer::broadcast_str_message(&str).await?;
         }
         Ok(())
     }
@@ -164,5 +171,10 @@ impl WsClient {
                 }
             }
         }
+    }
+
+    /// 判断协议端是否存活
+    pub async fn alive() -> Option<i64> {
+        WS_CLIENT.read().await.user_id
     }
 }

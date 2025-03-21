@@ -18,7 +18,7 @@ use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use crate::{
     client::WsClient,
     config,
-    model::{self, Api, ApiResponse, Event},
+    model::{self, Api, ApiResponse, ConnectMessage, Event},
 };
 
 pub type Writer = SplitSink<WebSocketStream<TcpStream>, Message>;
@@ -71,6 +71,15 @@ impl WsServer {
 
     /// 处理连接
     async fn handle_connect(reader: &mut Reader, writer: Arc<RwLock<Writer>>) -> anyhow::Result<()> {
+        // 判断协议端是否以及连接，如果协议端已连接，则推送连接成功消息给客户端
+        if let Some(user_id) = WsClient::alive().await {
+            let msg = ConnectMessage::new(user_id);
+            let msg = serde_json::to_string(&msg)?;
+            let message = Message::Text(msg.into());
+            writer.write().await.send(message).await?;
+            info!("send connect lifecycle message to client");
+        }
+
         loop {
             if let Some(msg) = reader.next().await {
                 match msg {
@@ -162,12 +171,22 @@ impl WsServer {
                 msg_clone
             })
             .collect();
+        info!("response count: {}", resps.len());
         for resp in resps {
             writer
                 .write()
                 .await
                 .send(Message::Text(serde_json::to_string(&resp)?.into()))
                 .await?;
+        }
+        Ok(())
+    }
+
+    /// 将字符串消息广播给所有客户端
+    pub async fn broadcast_str_message(msg: &str) -> anyhow::Result<()> {
+        let msg = Message::Text(msg.into());
+        for writer in WS_SERVER.read().await.writers.clone() {
+            writer.write().await.send(msg.clone()).await?;
         }
         Ok(())
     }
