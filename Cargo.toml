@@ -21,8 +21,10 @@ toml = "0.8.20"
 lettre = { version = "0.11.15", default-features = false, features = [
     "smtp-transport",
     "tokio1",
-    "tokio1-native-tls",
+    "tokio1-rustls",
     "builder",
+    "ring",
+    "rustls-native-certs",
 ] }
 
 futures-util = { version = "0.3.28", default-features = false, features = [

@@ -78,3 +78,8 @@ pub(crate) fn send_by_auth(group_id: i64) -> bool {
     }
     true
 }
+
+/// 接收ctrl+c信号
+pub fn ctrl_c_signal() -> impl Future<Output = Result<(), std::io::Error>> {
+    tokio::signal::ctrl_c()
+}

@@ -18,7 +18,7 @@ use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use crate::{
     client::WsClient,
     config,
-    model::{self, Api, ApiResponse, ConnectMessage, Event},
+    model::{self, ApiResponse, ConnectMessage, Event},
     utils,
 };
 
@@ -31,8 +31,6 @@ static WS_SERVER: LazyLock<RwLock<WsServer>> = LazyLock::new(|| RwLock::new(WsSe
 pub struct WsServer {
     pub writers: Vec<Arc<RwLock<Writer>>>,
     pub echo_map: HashMap<String, Arc<RwLock<Writer>>>,
-    pub api_map: HashMap<String, Api>,
-    pub same_echo_map: HashMap<String, Vec<String>>,
 }
 
 impl WsServer {
@@ -48,8 +46,15 @@ impl WsServer {
         println!("Listening on: {}", addr);
 
         // 接收客户端连接
-        while let Ok((stream, addr)) = listener.accept().await {
-            tokio::spawn(Self::handle_connection(stream, addr));
+        loop {
+            tokio::select! {
+                Ok((stream, addr)) = listener.accept() => {
+                    tokio::spawn(Self::handle_connection(stream, addr));
+                },
+                _ = utils::ctrl_c_signal() => {
+                    break;
+                }
+            }
         }
 
         Ok(())
@@ -82,24 +87,33 @@ impl WsServer {
         }
 
         loop {
-            if let Some(msg) = reader.next().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        let str = text.as_str();
-                        let writer = writer.clone();
-                        Self::handle_message(str, writer).await?;
+            tokio::select! {
+                Some(msg) =  reader.next() => {
+                    match msg {
+                        Ok(Message::Text(text)) => {
+                            let str = text.as_str();
+                            let writer = writer.clone();
+                            Self::handle_message(str, writer).await?;
+                        }
+                        Ok(Message::Ping(_)) => {
+                            debug!("receive ping message");
+                        }
+                        Ok(Message::Pong(_)) => {
+                            debug!("receive pong message");
+                        }
+                        Ok(_) => {
+                            debug!("receive non-text message");
+                            break;
+                        }
+                        Err(err) => {
+                            error!("receive error: {}", err);
+                            break;
+                        }
                     }
-                    Ok(Message::Ping(_) | Message::Pong(_)) => {
-                        debug!("receive ping/pong message");
-                    }
-                    Ok(_) => {
-                        debug!("receive non-text message");
-                        break;
-                    }
-                    Err(err) => {
-                        error!("receive error: {}", err);
-                        break;
-                    }
+                },
+                _ = utils::ctrl_c_signal() => {
+                    info!("receive ctrl-c signal");
+                    break;
                 }
             }
         }
@@ -114,32 +128,6 @@ impl WsServer {
         let echo = &api.echo;
         let mut ws_server = WS_SERVER.write().await;
 
-        let api_map_clone = ws_server.api_map.clone();
-        {
-            // 鉴于一个 api 会请求多次结果，只进行第一次请求，后续相同请求收入 echo_request_map
-            let mut this_api = api.clone();
-            let this_echo = this_api.echo.clone();
-            this_api.echo = String::new();
-            let mut denplicated_request = false;
-            for (echo, api_in_map) in api_map_clone.iter() {
-                if matches!(api_in_map, _this_api) {
-                    ws_server
-                        .same_echo_map
-                        .entry(echo.clone())
-                        .or_insert_with(Vec::new)
-                        .push(this_echo.clone());
-                    denplicated_request = true;
-                    break;
-                }
-            }
-            if !denplicated_request {
-                ws_server.api_map.insert(this_echo.clone(), this_api);
-            } else {
-                // 相同请求，阻断发送
-                return Ok(());
-            }
-        }
-
         // 黑白名单过滤
         if let Some(Some(group_id)) = api.params.get("group_id").map(|v| v.as_i64()) {
             if !utils::send_by_auth(group_id) {
@@ -147,7 +135,9 @@ impl WsServer {
             }
         }
 
-        ws_server.echo_map.insert(echo.clone(), writer.clone());
+        ws_server
+            .echo_map
+            .insert(echo.clone().unwrap_or_default(), writer.clone());
         // 将消息发送给对应 OneBot 协议端
         WsClient::send(api).await?;
         Ok(())
@@ -167,27 +157,11 @@ impl WsServer {
     pub async fn response_message(msg: ApiResponse) -> anyhow::Result<()> {
         let echo = &msg.echo;
         let mut ws_server = WS_SERVER.write().await;
-        let writer = ws_server
-            .echo_map
-            .remove(echo)
-            .ok_or_else(|| anyhow::anyhow!("echo not found"))?;
-        let resps: Vec<ApiResponse> = ws_server
-            .same_echo_map
-            .remove(echo)
-            .ok_or_else(|| anyhow::anyhow!("echo not found"))?
-            .iter()
-            .map(|echo| {
-                let mut msg_clone = msg.clone();
-                msg_clone.echo = echo.clone();
-                msg_clone
-            })
-            .collect();
-        info!("response count: {}", resps.len());
-        for resp in resps {
+        if let Some(writer) = ws_server.echo_map.remove(echo) {
             writer
                 .write()
                 .await
-                .send(Message::Text(serde_json::to_string(&resp)?.into()))
+                .send(Message::Text(serde_json::to_string(&msg)?.into()))
                 .await?;
         }
         Ok(())
