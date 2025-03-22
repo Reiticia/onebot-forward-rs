@@ -17,8 +17,17 @@ log = "0.4.22"
 tokio-tungstenite = { version = "0.26.2", features = ["rustls", "handshake"] }
 anyhow = "1.0.97"
 toml = "0.8.20"
+lettre = { version = "0.11.15", default-features = false, features = [
+    "smtp-transport",
+    "tokio1",
+    "tokio1-native-tls",
+    "builder",
+] }
 
-futures-util = { version = "0.3.28", default-features = false, features = ["sink", "std"] }
+futures-util = { version = "0.3.28", default-features = false, features = [
+    "sink",
+    "std",
+] }
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"

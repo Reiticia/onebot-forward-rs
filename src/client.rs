@@ -16,6 +16,7 @@ use crate::{
     config,
     model::{self, Api},
     server::WsServer,
+    utils,
 };
 
 pub type Writer = SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>;
@@ -33,7 +34,9 @@ static LAST_HEARTBEAT_TIME: AtomicI64 = AtomicI64::new(0);
 impl WsClient {
     /// 创建WS连接
     pub async fn connect() -> anyhow::Result<()> {
-        let url = config::APP_CONFIG.websocket.client_url();
+        let config = config::APP_CONFIG.clone();
+        let url = config.websocket.client_url();
+        let is_notice = config.notice.clone();
         info!("try to connect to server");
 
         tokio::spawn(async move {
@@ -48,9 +51,12 @@ impl WsClient {
                         if let Err(err) = Self::handle_connect(ws).await {
                             error!("Connection error: {}", err);
                         }
+                        // 发送邮件通知消息
+                        if let Some(ref notice) = is_notice {
+                            utils::send_email(notice.clone(), &WS_CLIENT.read().await.user_id.unwrap_or(0).to_string()).await?;
+                        }
                         WS_CLIENT.write().await.writer = None;
                         WS_CLIENT.write().await.user_id = None;
-                        // 发送邮件通知消息
                         info!("server end connection, try to reconnect");
                     },
                     _ = sleep_task => {
@@ -111,6 +117,21 @@ impl WsClient {
             {
                 // 连接成功事件
                 info!("bot connect success");
+                // 发送消息通知
+                if let Some(user_id) = config::APP_CONFIG.clone().online_notice {
+                    let connect_msg = "协议端已连接";
+                    let params = format!(
+                        r#"{{"user_id": {:?}, "message": [{{"type": "text", "data": {{ "text": {:?} }}}}]}}"#,
+                        user_id, connect_msg
+                    );
+                    let api = Api {
+                        action: "send_private_msg".into(),
+                        params: serde_json::from_str(&params)?,
+                        echo: "1".into(),
+                    };
+                    WsClient::send(api).await?;
+                };
+
                 WS_CLIENT.write().await.user_id = Some(event.self_id);
                 LAST_HEARTBEAT_TIME.store(event.time, Ordering::SeqCst);
                 // 开启心跳检测事件

@@ -26,6 +26,7 @@ pub struct AppConfig {
     pub blacklist: Option<Vec<i64>>,
     pub whitelist: Option<Vec<i64>>,
     pub notice: Option<EmailNoticeConfig>,
+    pub online_notice: Option<i64>,
 }
 
 impl AppConfig {
