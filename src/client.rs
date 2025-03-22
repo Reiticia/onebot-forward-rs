@@ -27,8 +27,8 @@ pub struct WsClient {
     writer: Option<Writer>,
 }
 
-static WS_CLIENT: LazyLock<Arc<RwLock<WsClient>>> = LazyLock::new(|| Arc::new(RwLock::new(WsClient::default())));
-static LAST_HEARTBEAT_TIME: LazyLock<AtomicI64> = LazyLock::new(|| AtomicI64::new(0));
+static WS_CLIENT: LazyLock<RwLock<WsClient>> = LazyLock::new(|| RwLock::new(WsClient::default()));
+static LAST_HEARTBEAT_TIME: AtomicI64 = AtomicI64::new(0);
 
 impl WsClient {
     /// 创建WS连接
@@ -49,6 +49,7 @@ impl WsClient {
                             error!("Connection error: {}", err);
                         }
                         WS_CLIENT.write().await.writer = None;
+                        WS_CLIENT.write().await.user_id = None;
                         // 发送邮件通知消息
                         info!("server end connection, try to reconnect");
                     },
@@ -98,11 +99,9 @@ impl WsClient {
                 }
             }
         }
-        // 连接断开，清空WS_CLIENT
-        WS_CLIENT.write().await.writer = None;
-        WS_CLIENT.write().await.user_id = None;
         Ok(())
     }
+
     /// 处理消息
     async fn handle_message(msg: &str, active: Arc<AtomicBool>) -> anyhow::Result<()> {
         if let Ok(event) = serde_json::from_str::<model::Event>(msg) {
@@ -126,7 +125,7 @@ impl WsClient {
             WsServer::response_message(resposne).await?;
         }
         if let Ok(api) = serde_json::from_str::<model::TestMessage>(msg) {
-            let str = serde_json::to_string(&api.extra)?;
+            let str = serde_json::to_string(&api)?;
             WsServer::broadcast_str_message(&str).await?;
         }
         Ok(())
@@ -134,8 +133,7 @@ impl WsClient {
 
     /// 发送消息
     pub async fn send(data: Api) -> anyhow::Result<()> {
-        let ws_client_clone = WS_CLIENT.clone();
-        let mut ws_client = ws_client_clone.write().await;
+        let mut ws_client = WS_CLIENT.write().await;
 
         if let Some(ref mut writer) = ws_client.writer {
             let json = serde_json::to_string(&data)?;
