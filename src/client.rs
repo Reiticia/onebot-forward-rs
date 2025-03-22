@@ -140,6 +140,13 @@ impl WsClient {
             if event.post_type == "meta_event" && event.meta_event_type == Some("heartbeat".into()) {
                 LAST_HEARTBEAT_TIME.store(event.time, Ordering::SeqCst);
             }
+
+            // 黑白名单配置
+            if let Some(group_id) = event.group_id {
+                if !utils::send_by_auth(group_id) {
+                    return Ok(());
+                }
+            }
             WsServer::broadcast_message(event).await?;
         }
         if let Ok(resposne) = serde_json::from_str::<model::ApiResponse>(msg) {

@@ -19,6 +19,7 @@ use crate::{
     client::WsClient,
     config,
     model::{self, Api, ApiResponse, ConnectMessage, Event},
+    utils,
 };
 
 pub type Writer = SplitSink<WebSocketStream<TcpStream>, Message>;
@@ -133,6 +134,16 @@ impl WsServer {
             }
             if !denplicated_request {
                 ws_server.api_map.insert(this_echo.clone(), this_api);
+            } else {
+                // 相同请求，阻断发送
+                return Ok(());
+            }
+        }
+
+        // 黑白名单过滤
+        if let Some(Some(group_id)) = api.params.get("group_id").map(|v| v.as_i64()) {
+            if !utils::send_by_auth(group_id) {
+                return Ok(());
             }
         }
 
