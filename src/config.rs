@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     path::PathBuf,
     str::FromStr,
@@ -14,8 +12,20 @@ pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(|| {
 });
 
 fn init_config() -> anyhow::Result<AppConfig> {
-    let config_str = std::fs::read_to_string("app.toml")?;
-    let config: AppConfig = toml::from_str(&config_str)?;
+    let mut config: Option<AppConfig> = None;
+    if let Ok(config_str) = std::fs::read_to_string("app.yml") {
+        config = Some(serde_yaml::from_str(&config_str)?);
+    }
+    if let Ok(config_str) = std::fs::read_to_string("app.yaml") {
+        config = Some(serde_yaml::from_str(&config_str)?);
+    }
+    if let Ok(config_str) = std::fs::read_to_string("app.json") {
+        config = Some(serde_json::from_str(&config_str)?);
+    }
+    if let Ok(config_str) = std::fs::read_to_string("app.toml") {
+        config = Some(toml::from_str(&config_str)?);
+    };
+    let config = config.ok_or_else(|| anyhow::anyhow!("配置文件 app.yml/yaml/json/toml 不存在"))?;
     Ok(config)
 }
 
@@ -130,7 +140,6 @@ pub struct LogFileConfig {
 #[serde(rename_all = "lowercase")]
 pub struct EmailNoticeConfig {
     pub smtp: String,
-    pub port: u16,
     pub username: String,
     pub password: String,
     pub receiver: String,
@@ -139,15 +148,13 @@ pub struct EmailNoticeConfig {
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct EmailTemplate {
-    pub title: String,
     pub subject: String,
     pub body: String,
 }
 impl Default for EmailTemplate {
     fn default() -> Self {
         Self {
-            title: "你的Bot掉线了".into(),
-            subject: "OneBot 掉线通知".into(),
+            subject: "你的Bot掉线了".into(),
             body: "OneBot 掉线通知：\n\n({bot_id}) 掉线了，请及时处理。".into(),
         }
     }
