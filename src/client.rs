@@ -196,6 +196,7 @@ impl WsClient {
             let json = serde_json::to_string(&data)?;
             let message = Message::Text(json.into());
             writer.send(message).await?;
+            debug!("send message success")
         }
         Ok(())
     }
