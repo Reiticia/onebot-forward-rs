@@ -40,7 +40,6 @@ impl WsClient {
     pub async fn connect() -> anyhow::Result<()> {
         let config = config::APP_CONFIG.clone();
         let url = config.websocket.client_url();
-        let is_notice = config.notice.clone();
         info!("try to connect to server");
 
         tokio::spawn(async move {
@@ -59,10 +58,6 @@ impl WsClient {
                                 }
                             },
                             Err(err) => error!("Connection error: {}", err),
-                        }
-                        // 发送邮件通知消息
-                        if let Some(ref notice) = is_notice {
-                            utils::send_email(notice.clone(), &WS_CLIENT.read().await.user_id.unwrap_or(0).to_string()).await?;
                         }
                         WS_CLIENT.write().await.writer = None;
                         WS_CLIENT.write().await.user_id = None;
@@ -93,6 +88,9 @@ impl WsClient {
     async fn receive(reader: &mut Reader) -> anyhow::Result<i64> {
         let active = Arc::new(AtomicBool::new(true));
         let interupt_flag = AtomicBool::new(false);
+        let config = config::APP_CONFIG.clone();
+        let is_notice = config.notice.clone();
+
         while active.load(Ordering::SeqCst) {
             tokio::select! {
                 Some(msg) = reader.next() => {
@@ -107,9 +105,16 @@ impl WsClient {
                         Ok(Message::Pong(_)) => {
                             debug!("receive pong message");
                         }
+                        Ok(Message::Close(_)) => {
+                            if let Some(ref notice) = is_notice {
+                                utils::send_email(notice.clone(), &WS_CLIENT.read().await.user_id.unwrap_or(0).to_string()).await?;
+                            }
+                            debug!("receive close message");
+                            break;
+                        }
                         Ok(_) => {
                             debug!("receive non-text message");
-                            // break;
+                            break;
                         }
                         Err(err) => {
                             error!("receive error: {}", err);

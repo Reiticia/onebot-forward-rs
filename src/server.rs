@@ -29,7 +29,7 @@ static WS_SERVER: LazyLock<RwLock<WsServer>> = LazyLock::new(|| RwLock::new(WsSe
 
 #[derive(Debug, Default)]
 pub struct WsServer {
-    pub writers: Vec<Arc<RwLock<Writer>>>,
+    pub writers_map: HashMap<String, Arc<RwLock<Writer>>>,
     pub echo_map: HashMap<String, Arc<RwLock<Writer>>>,
 }
 
@@ -70,7 +70,11 @@ impl WsServer {
 
         let (outgoing, mut incoming) = ws_stream.split();
         let writer = Arc::new(RwLock::new(outgoing));
-        WS_SERVER.write().await.writers.push(writer.clone());
+        WS_SERVER
+            .write()
+            .await
+            .writers_map
+            .insert(addr.to_string(), writer.clone());
 
         tokio::spawn(async move { Self::handle_connect(&mut incoming, writer).await });
     }
@@ -101,6 +105,10 @@ impl WsServer {
                         Ok(Message::Pong(_)) => {
                             debug!("receive pong message");
                         }
+                        Ok(Message::Close(_)) => {
+                            debug!("receive close message");
+                            break;
+                        }
                         Ok(_) => {
                             debug!("receive non-text message");
                             break;
@@ -118,7 +126,14 @@ impl WsServer {
             }
         }
         // 删除对应客户端
-        WS_SERVER.write().await.writers.retain(|w| !Arc::ptr_eq(w, &writer));
+        WS_SERVER.write().await.writers_map.retain(|k, w| {
+            if Arc::ptr_eq(w, &writer) {
+                info!("remove client: {}", k);
+                false
+            } else {
+                true
+            }
+        });
         Ok(())
     }
 
@@ -147,7 +162,7 @@ impl WsServer {
     pub async fn broadcast_message(msg: Event) -> anyhow::Result<()> {
         let msg = serde_json::to_string(&msg)?;
         let msg = Message::Text(msg.into());
-        for writer in WS_SERVER.read().await.writers.clone() {
+        for (_, writer) in WS_SERVER.read().await.writers_map.clone() {
             writer.write().await.send(msg.clone()).await?;
         }
         Ok(())
@@ -170,7 +185,7 @@ impl WsServer {
     /// 将字符串消息广播给所有客户端
     pub async fn broadcast_str_message(msg: &str) -> anyhow::Result<()> {
         let msg = Message::Text(msg.into());
-        for writer in WS_SERVER.read().await.writers.clone() {
+        for (_, writer) in WS_SERVER.read().await.writers_map.clone() {
             writer.write().await.send(msg.clone()).await?;
         }
         Ok(())
