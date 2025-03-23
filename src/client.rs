@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     sync::{
         Arc, LazyLock,
@@ -40,6 +38,7 @@ impl WsClient {
     pub async fn connect() -> anyhow::Result<()> {
         let config = config::APP_CONFIG.clone();
         let url = config.websocket.client_url();
+        let is_notice = config.notice.clone();
         info!("try to connect to server");
 
         tokio::spawn(async move {
@@ -61,6 +60,9 @@ impl WsClient {
                         }
                         WS_CLIENT.write().await.writer = None;
                         WS_CLIENT.write().await.user_id = None;
+                        if let Some(ref notice) = is_notice {
+                            utils::send_email(notice.clone(), &WS_CLIENT.read().await.user_id.unwrap_or(0).to_string()).await?;
+                        }
                         info!("server end connection, try to reconnect");
                     },
                     _ = sleep_task => {
@@ -88,8 +90,6 @@ impl WsClient {
     async fn receive(reader: &mut Reader) -> anyhow::Result<i64> {
         let active = Arc::new(AtomicBool::new(true));
         let interupt_flag = AtomicBool::new(false);
-        let config = config::APP_CONFIG.clone();
-        let is_notice = config.notice.clone();
 
         while active.load(Ordering::SeqCst) {
             tokio::select! {
@@ -106,9 +106,6 @@ impl WsClient {
                             debug!("receive pong message");
                         }
                         Ok(Message::Close(_)) => {
-                            if let Some(ref notice) = is_notice {
-                                utils::send_email(notice.clone(), &WS_CLIENT.read().await.user_id.unwrap_or(0).to_string()).await?;
-                            }
                             debug!("receive close message");
                             break;
                         }
@@ -137,7 +134,7 @@ impl WsClient {
     }
 
     /// 处理消息
-    async fn handle_message(msg: &str, _active: Arc<AtomicBool>) -> anyhow::Result<()> {
+    async fn handle_message(msg: &str, active: Arc<AtomicBool>) -> anyhow::Result<()> {
         if let Ok(event) = serde_json::from_str::<model::Event>(msg) {
             if event.post_type == "meta_event"
                 && event.meta_event_type == Some("lifecycle".into())
@@ -164,10 +161,12 @@ impl WsClient {
                 WS_CLIENT.write().await.user_id = Some(event.self_id);
                 LAST_HEARTBEAT_TIME.store(event.time, Ordering::SeqCst);
                 // 开启心跳检测事件
-                // tokio::spawn(Self::heartbeat_active(active.clone()));
+                tokio::spawn(Self::heartbeat_active(active.clone()));
             }
             if event.post_type == "meta_event" && event.meta_event_type == Some("heartbeat".into()) {
                 LAST_HEARTBEAT_TIME.store(event.time, Ordering::SeqCst);
+                debug!("receive heartbeat message");
+                return Ok(());
             }
 
             // 黑白名单配置
@@ -203,6 +202,7 @@ impl WsClient {
 
     /// 检测心跳
     async fn heartbeat_active(active: Arc<AtomicBool>) {
+        info!("start heartbeat active task");
         loop {
             let heartbeat_time = config::APP_CONFIG.websocket.heartbeat;
             let last_heartbeat = LAST_HEARTBEAT_TIME.load(Ordering::SeqCst);
@@ -226,7 +226,7 @@ impl WsClient {
                     // 时间倒流时的处理
                     error!("System time earlier than last heartbeat");
                 }
-                _ => continue,
+                _ => (),
             }
 
             let sleep_future = tokio::time::sleep(time::Duration::from_secs(heartbeat_time as u64));
@@ -239,6 +239,7 @@ impl WsClient {
                 }
             }
         }
+        info!("heartbeat active task exit")
     }
 
     /// 判断协议端是否存活
