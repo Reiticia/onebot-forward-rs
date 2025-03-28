@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        Arc, LazyLock,
+        Arc, LazyLock, OnceLock,
         atomic::{AtomicBool, AtomicI64, Ordering},
     },
     time::{self, Duration, SystemTime, UNIX_EPOCH},
@@ -10,40 +10,53 @@ use futures_util::{
     SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
 use tokio::{net::TcpStream, sync::RwLock};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async,
+    tungstenite::{Message, client::IntoClientRequest},
+};
 
 use crate::{
-    config,
-    model::{self, Api},
-    server::WsServer,
+    config::{self, WebSocketConfig},
+    model::onebot::{Api, ApiResponse, Event},
     utils,
+    wss::sdk::SdkSide,
 };
 
 pub type Writer = SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>;
 pub type Reader = SplitStream<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>;
 
 #[derive(Debug, Default)]
-pub struct WsClient {
+pub struct ImplSide {
     user_id: Option<i64>,
     writer: Option<Writer>,
 }
 
-static WS_CLIENT: LazyLock<RwLock<WsClient>> = LazyLock::new(|| RwLock::new(WsClient::default()));
+static IMPL_SIDE: LazyLock<RwLock<ImplSide>> = LazyLock::new(|| RwLock::new(ImplSide::default()));
 static LAST_HEARTBEAT_TIME: AtomicI64 = AtomicI64::new(0);
+static HEARTBEAT_INTERVAL: OnceLock<i64> = OnceLock::new();
 
-impl WsClient {
+impl ImplSide {
     /// 创建WS连接
-    pub async fn connect() -> anyhow::Result<()> {
-        let config = config::APP_CONFIG.clone();
-        let url = config.websocket.client_url();
-        let is_notice = config.notice.clone();
+    pub async fn connect(websocket: &WebSocketConfig) -> anyhow::Result<()> {
+        info!("start websocket client mode");
+        let url = websocket.client_url();
+        let secret = websocket.client.secret.clone();
+        HEARTBEAT_INTERVAL.get_or_init(|| websocket.heartbeat);
+        let is_notice = config::APP_CONFIG.get_notice();
         info!("try to connect to server");
 
         tokio::spawn(async move {
             loop {
-                let connect_task = connect_async(&url);
+                let mut request = url.as_str().into_client_request().unwrap();
+                if let Some(ref secret) = secret {
+                    let access_token = format!("Bearer {}", secret);
+                    request
+                        .headers_mut()
+                        .insert("Authorization", access_token.parse().unwrap());
+                }
+                let connect_task = connect_async(request);
                 let sleep_task = tokio::time::sleep(time::Duration::from_secs(5));
 
                 tokio::select! {
@@ -58,10 +71,10 @@ impl WsClient {
                             },
                             Err(err) => error!("Connection error: {}", err),
                         }
-                        WS_CLIENT.write().await.writer = None;
-                        WS_CLIENT.write().await.user_id = None;
+                        IMPL_SIDE.write().await.writer = None;
+                        IMPL_SIDE.write().await.user_id = None;
                         if let Some(ref notice) = is_notice {
-                            utils::send_email(notice.clone(), &WS_CLIENT.read().await.user_id.unwrap_or(0).to_string()).await?;
+                            utils::send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await?;
                         }
                         info!("server end connection, try to reconnect");
                     },
@@ -82,7 +95,7 @@ impl WsClient {
     /// 处理消息
     async fn handle_connect(ws: WebSocketStream<MaybeTlsStream<TcpStream>>) -> anyhow::Result<i64> {
         let (writer, ref mut reader) = ws.split();
-        WS_CLIENT.write().await.writer = Some(writer);
+        IMPL_SIDE.write().await.writer = Some(writer);
         Self::receive(reader).await
     }
 
@@ -100,17 +113,17 @@ impl WsClient {
                             Self::handle_message(str, active.clone()).await?;
                         }
                         Ok(Message::Ping(_)) => {
-                            debug!("receive ping message");
+                            trace!("receive ping message");
                         }
                         Ok(Message::Pong(_)) => {
-                            debug!("receive pong message");
+                            trace!("receive pong message");
                         }
                         Ok(Message::Close(_)) => {
-                            debug!("receive close message");
+                            info!("receive close message");
                             break;
                         }
                         Ok(_) => {
-                            debug!("receive non-text message");
+                            info!("receive non-text message");
                             break;
                         }
                         Err(err) => {
@@ -135,7 +148,7 @@ impl WsClient {
 
     /// 处理消息
     async fn handle_message(msg: &str, active: Arc<AtomicBool>) -> anyhow::Result<()> {
-        if let Ok(event) = serde_json::from_str::<model::Event>(msg) {
+        if let Ok(event) = serde_json::from_str::<Event>(msg) {
             if event.post_type == "meta_event"
                 && event.meta_event_type == Some("lifecycle".into())
                 && event.sub_type == Some("connect".into())
@@ -143,7 +156,7 @@ impl WsClient {
                 // 连接成功事件
                 info!("bot connect success");
                 // 发送消息通知
-                if let Some(user_id) = config::APP_CONFIG.clone().online_notice {
+                if let Some(user_id) = config::APP_CONFIG.get_online_notice_target() {
                     let connect_msg = "协议端已连接";
                     let params = format!(
                         r#"{{"user_id": {:?}, "message": [{{"type": "text", "data": {{ "text": {:?} }}}}]}}"#,
@@ -155,10 +168,10 @@ impl WsClient {
                         echo: None,
                     };
                     info!("send connect message to user_id: {}", user_id);
-                    WsClient::send(api).await?;
+                    ImplSide::send(api).await?;
                 };
 
-                WS_CLIENT.write().await.user_id = Some(event.self_id);
+                IMPL_SIDE.write().await.user_id = Some(event.self_id);
                 LAST_HEARTBEAT_TIME.store(event.time, Ordering::SeqCst);
                 // 开启心跳检测事件
                 tokio::spawn(Self::heartbeat_active(active.clone()));
@@ -175,21 +188,18 @@ impl WsClient {
                     return Ok(());
                 }
             }
-            WsServer::broadcast_message(event).await?;
+            SdkSide::broadcast_message(event).await?;
         }
-        if let Ok(resposne) = serde_json::from_str::<model::ApiResponse>(msg) {
-            WsServer::response_message(resposne).await?;
-        }
-        if let Ok(api) = serde_json::from_str::<model::TestMessage>(msg) {
-            let str = serde_json::to_string(&api)?;
-            WsServer::broadcast_str_message(&str).await?;
+        if let Ok(resposne) = serde_json::from_str::<ApiResponse>(msg) {
+            SdkSide::response_message(resposne).await?;
         }
         Ok(())
     }
 
     /// 发送消息
     pub async fn send(data: Api) -> anyhow::Result<()> {
-        let mut ws_client = WS_CLIENT.write().await;
+        trace!("invoke api: {:?}", data);
+        let mut ws_client = IMPL_SIDE.write().await;
 
         if let Some(ref mut writer) = ws_client.writer {
             let json = serde_json::to_string(&data)?;
@@ -204,7 +214,7 @@ impl WsClient {
     async fn heartbeat_active(active: Arc<AtomicBool>) {
         info!("start heartbeat active task");
         loop {
-            let heartbeat_time = config::APP_CONFIG.websocket.heartbeat;
+            let heartbeat_time = *HEARTBEAT_INTERVAL.get().unwrap();
             let last_heartbeat = LAST_HEARTBEAT_TIME.load(Ordering::SeqCst);
             let last_heartbeat = UNIX_EPOCH + Duration::from_secs(last_heartbeat as u64);
             match SystemTime::now().duration_since(last_heartbeat) {
@@ -218,7 +228,7 @@ impl WsClient {
                     active.store(false, Ordering::SeqCst);
                     info!(
                         "{} heartbeat timeout, try to reconnect",
-                        WS_CLIENT.read().await.user_id.unwrap_or(0)
+                        IMPL_SIDE.read().await.user_id.unwrap_or(0)
                     );
                     break;
                 }
@@ -244,6 +254,6 @@ impl WsClient {
 
     /// 判断协议端是否存活
     pub async fn alive() -> Option<i64> {
-        WS_CLIENT.read().await.user_id
+        IMPL_SIDE.read().await.user_id
     }
 }

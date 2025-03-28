@@ -31,7 +31,7 @@ fn init_config() -> anyhow::Result<AppConfig> {
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct AppConfig {
-    pub websocket: WebSocketConfig,
+    pub websocket: Option<WebSocketConfig>,
     pub logger: Option<LoggerConfig>,
     pub blacklist: Option<Vec<i64>>,
     pub whitelist: Option<Vec<i64>>,
@@ -79,6 +79,16 @@ impl AppConfig {
 
         Ok(())
     }
+
+    /// 获取上线通知人
+    pub fn get_online_notice_target(&self) -> Option<i64> {
+        self.online_notice
+    }
+
+    /// 获取邮件通知人
+    pub fn get_notice(&self) -> Option<EmailNoticeConfig> {
+        self.notice.clone()
+    }
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -98,6 +108,7 @@ impl WebSocketConfig {
 pub struct Server {
     pub host: String,
     pub port: u16,
+    pub secret: Option<String>,
 }
 #[derive(serde::Deserialize, Debug, Clone, Default)]
 pub struct LoggerConfig {

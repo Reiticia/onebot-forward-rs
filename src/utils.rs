@@ -21,7 +21,6 @@ pub(crate) async fn send_email(config: EmailNoticeConfig, user_id: &str) -> anyh
 
     let creds = Credentials::new(config.username.clone(), config.password.clone());
 
-    // Open a remote connection to gmail
     let mailer: AsyncSmtpTransport<Tokio1Executor> = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp)?
         .credentials(creds)
         .build();

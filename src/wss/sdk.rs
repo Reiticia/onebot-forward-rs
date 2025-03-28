@@ -8,7 +8,7 @@ use futures_util::{
     SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
-use log::{debug, error, info};
+use log::{error, info, trace};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::RwLock,
@@ -16,34 +16,33 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
 use crate::{
-    client::WsClient,
-    config,
-    model::{self, ApiResponse, ConnectMessage, Event},
+    config::WebSocketConfig,
+    model::onebot::{Api, ApiResponse, ConnectMessage, Event},
     utils,
+    wss::r#impl::ImplSide,
 };
 
 pub type Writer = SplitSink<WebSocketStream<TcpStream>, Message>;
 pub type Reader = SplitStream<WebSocketStream<TcpStream>>;
 
-static WS_SERVER: LazyLock<RwLock<WsServer>> = LazyLock::new(|| RwLock::new(WsServer::default()));
+static SDK_SIDE: LazyLock<RwLock<SdkSide>> = LazyLock::new(|| RwLock::new(SdkSide::default()));
 
 #[derive(Debug, Default)]
-pub struct WsServer {
+pub struct SdkSide {
     pub writers_map: HashMap<String, Arc<RwLock<Writer>>>,
     pub echo_map: HashMap<String, Arc<RwLock<Writer>>>,
 }
 
-impl WsServer {
+impl SdkSide {
     /// 创建WS服务
-    pub async fn start() -> anyhow::Result<()> {
-        let websocket = config::APP_CONFIG.websocket.clone();
-        let host = websocket.server.host;
+    pub async fn start(websocket: &WebSocketConfig) -> anyhow::Result<()> {
+        let host = websocket.server.host.clone();
         let port = websocket.server.port;
         let addr = format!("{}:{}", &host, &port);
         // Create the event loop and TCP listener we'll accept connections on.
         let try_socket = TcpListener::bind(&addr).await;
         let listener = try_socket.expect("Failed to bind");
-        println!("Listening on: {}", addr);
+        info!("Listening on: {}", addr);
 
         // 接收客户端连接
         loop {
@@ -70,7 +69,7 @@ impl WsServer {
 
         let (outgoing, mut incoming) = ws_stream.split();
         let writer = Arc::new(RwLock::new(outgoing));
-        WS_SERVER
+        SDK_SIDE
             .write()
             .await
             .writers_map
@@ -82,7 +81,7 @@ impl WsServer {
     /// 处理连接
     async fn handle_connect(reader: &mut Reader, writer: Arc<RwLock<Writer>>) -> anyhow::Result<()> {
         // 判断协议端是否以及连接，如果协议端已连接，则推送连接成功消息给客户端
-        if let Some(user_id) = WsClient::alive().await {
+        if let Some(user_id) = ImplSide::alive().await {
             let msg = ConnectMessage::new(user_id);
             let msg = serde_json::to_string(&msg)?;
             let message = Message::Text(msg.into());
@@ -100,17 +99,17 @@ impl WsServer {
                             Self::handle_message(str, writer).await?;
                         }
                         Ok(Message::Ping(_)) => {
-                            debug!("receive ping message");
+                            trace!("receive ping message");
                         }
                         Ok(Message::Pong(_)) => {
-                            debug!("receive pong message");
+                            trace!("receive pong message");
                         }
                         Ok(Message::Close(_)) => {
-                            debug!("receive close message");
+                            info!("receive close message");
                             break;
                         }
                         Ok(_) => {
-                            debug!("receive non-text message");
+                            info!("receive non-text message");
                             break;
                         }
                         Err(err) => {
@@ -126,7 +125,7 @@ impl WsServer {
             }
         }
         // 删除对应客户端
-        WS_SERVER.write().await.writers_map.retain(|k, w| {
+        SDK_SIDE.write().await.writers_map.retain(|k, w| {
             if Arc::ptr_eq(w, &writer) {
                 info!("remove client: {}", k);
                 false
@@ -139,9 +138,9 @@ impl WsServer {
 
     /// 处理消息
     async fn handle_message(msg: &str, writer: Arc<RwLock<Writer>>) -> anyhow::Result<()> {
-        let api = serde_json::from_str::<model::Api>(msg)?;
+        let api = serde_json::from_str::<Api>(msg)?;
         let echo = &api.echo;
-        let mut ws_server = WS_SERVER.write().await;
+        let mut ws_server = SDK_SIDE.write().await;
 
         // 黑白名单过滤
         if let Some(Some(group_id)) = api.params.get("group_id").map(|v| v.as_i64()) {
@@ -154,15 +153,16 @@ impl WsServer {
             .echo_map
             .insert(echo.clone().unwrap_or_default(), writer.clone());
         // 将消息发送给对应 OneBot 协议端
-        WsClient::send(api).await?;
+        ImplSide::send(api).await?;
         Ok(())
     }
 
     /// 将消息广播给所有客户端
     pub async fn broadcast_message(msg: Event) -> anyhow::Result<()> {
+        trace!("broadcast event: {:?}", msg);
         let msg = serde_json::to_string(&msg)?;
         let msg = Message::Text(msg.into());
-        for (_, writer) in WS_SERVER.read().await.writers_map.clone() {
+        for (_, writer) in SDK_SIDE.read().await.writers_map.clone() {
             writer.write().await.send(msg.clone()).await?;
         }
         Ok(())
@@ -170,23 +170,15 @@ impl WsServer {
 
     /// 将API调用返回给调用方
     pub async fn response_message(msg: ApiResponse) -> anyhow::Result<()> {
+        trace!("feedback response: {:?}", msg);
         let echo = &msg.echo;
-        let mut ws_server = WS_SERVER.write().await;
+        let mut ws_server = SDK_SIDE.write().await;
         if let Some(writer) = ws_server.echo_map.remove(echo) {
             writer
                 .write()
                 .await
                 .send(Message::Text(serde_json::to_string(&msg)?.into()))
                 .await?;
-        }
-        Ok(())
-    }
-
-    /// 将字符串消息广播给所有客户端
-    pub async fn broadcast_str_message(msg: &str) -> anyhow::Result<()> {
-        let msg = Message::Text(msg.into());
-        for (_, writer) in WS_SERVER.read().await.writers_map.clone() {
-            writer.write().await.send(msg.clone()).await?;
         }
         Ok(())
     }
