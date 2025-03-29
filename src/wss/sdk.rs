@@ -13,7 +13,13 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::RwLock,
 };
-use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{
+        Message,
+        handshake::{machine::TryParse, server::Request},
+    },
+};
 
 use crate::{
     config::WebSocketConfig,
@@ -38,6 +44,7 @@ impl SdkSide {
     pub async fn start(websocket: &WebSocketConfig) -> anyhow::Result<()> {
         let host = websocket.server.host.clone();
         let port = websocket.server.port;
+        let secret = websocket.server.secret.clone();
         let addr = format!("{}:{}", &host, &port);
         // Create the event loop and TCP listener we'll accept connections on.
         let try_socket = TcpListener::bind(&addr).await;
@@ -48,6 +55,12 @@ impl SdkSide {
         loop {
             tokio::select! {
                 Ok((stream, addr)) = listener.accept() => {
+                    if let Some(ref secret) = secret {
+                        if !Self::validate_headers(&stream, secret).await {
+                            error!("token invalid");
+                            continue;
+                        }
+                    }
                     tokio::spawn(Self::handle_connection(stream, addr));
                 },
                 _ = utils::ctrl_c_signal() => {
@@ -57,6 +70,27 @@ impl SdkSide {
         }
 
         Ok(())
+    }
+
+    async fn validate_headers(stream: &TcpStream, token: &str) -> bool {
+        let mut headers = [0u8; 1024];
+        let n = stream.peek(&mut headers).await.unwrap();
+
+        // 2. 解析为 HTTP 请求
+        let request = match Request::try_parse(&headers[..n]) {
+            Ok(Some((_, req))) => req,
+            _ => {
+                eprintln!("Invalid request");
+                return false;
+            }
+        };
+
+        request
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s == format!("Bearer {}", token))
+            .unwrap_or(false)
     }
 
     pub async fn handle_connection(raw_stream: TcpStream, addr: SocketAddr) {
