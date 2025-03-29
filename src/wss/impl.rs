@@ -71,11 +71,11 @@ impl ImplSide {
                             },
                             Err(err) => error!("Connection error: {}", err),
                         }
-                        IMPL_SIDE.write().await.writer = None;
-                        IMPL_SIDE.write().await.user_id = None;
                         if let Some(ref notice) = is_notice {
                             utils::send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await?;
                         }
+                        IMPL_SIDE.write().await.writer = None;
+                        IMPL_SIDE.write().await.user_id = None;
                         info!("server end connection, try to reconnect");
                     },
                     _ = sleep_task => {
