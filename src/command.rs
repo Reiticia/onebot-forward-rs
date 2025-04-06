@@ -35,7 +35,7 @@ enum Commands {
 // 具体操作（创建、删除、列表）
 #[derive(Subcommand, Debug)]
 enum Action {
-    #[clap(name = "创建", alias = "新增")]
+    #[clap(name = "添加", alias = "新增")]
     Create { id: i64 },
     #[clap(name = "删除", alias = "移除")]
     Delete { id: i64 },
@@ -98,7 +98,7 @@ impl Cli {
                     return Ok(message);
                 }
                 rule.save(db).await?;
-                info!("{:?} 添加 {} 成功", item_type, id);
+                info!("{:?} add {} success", item_type, id);
                 let message = Response {
                     action: format!("添加{}", action_str),
                     success: true,
@@ -122,7 +122,7 @@ impl Cli {
                     };
                     return Ok(message);
                 }
-                info!("{:?} 删除 {} 成功", item_type, id);
+                info!("{:?} remove {} success", item_type, id);
                 let message = Response {
                     action: format!("删除{}", action_str),
                     success: true,

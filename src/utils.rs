@@ -6,6 +6,7 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType,
     transport::smtp::authentication::Credentials,
 };
+use log::info;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 /// 发送邮件
@@ -77,9 +78,11 @@ pub(crate) async fn send_by_auth(group_id: i64) -> anyhow::Result<bool> {
     let black_list: Vec<i64> = rules.iter().map(|rule| rule.chat_id).collect();
 
     if white_list.contains(&group_id) {
+        info!("group {} is in whitelist, send message", group_id);
         return Ok(true);
     }
     if black_list.contains(&group_id) {
+        info!("group {} is in blacklist, ignore message", group_id);
         return Ok(false);
     }
     Ok(matches!(default_policy.unwrap_or_default(), config::Policy::Allow))
