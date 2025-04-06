@@ -10,7 +10,7 @@ use futures_util::{
     SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use tokio::{net::TcpStream, sync::RwLock};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
@@ -18,6 +18,7 @@ use tokio_tungstenite::{
 };
 
 use crate::{
+    Cli,
     config::{self, WebSocketConfig},
     model::onebot::{Api, ApiResponse, Event},
     utils,
@@ -79,7 +80,7 @@ impl ImplSide {
                         info!("server end connection, try to reconnect");
                     },
                     _ = sleep_task => {
-                        info!("faile to connect to server, retry in 5 seconds")
+                        warn!("faile to connect to server, retry in 5 seconds")
                     }
                     _ = utils::ctrl_c_signal() => {
                         info!("receive interupt signal, exit connect");
@@ -181,10 +182,48 @@ impl ImplSide {
                 debug!("receive heartbeat message");
                 return Ok(());
             }
+            // 判断超级管理员，若是，尝试解析指令
+            if event.post_type == "message" {
+                if let Some(user_id) = event.user_id {
+                    // 如果是超级管理员，则匹配请求命令
+                    if config::APP_CONFIG.super_users.contains(&user_id) {
+                        if let Ok(command) = Cli::parse_command(event.raw_message.clone().unwrap_or_default().as_str())
+                        {
+                            let response = command.execute().await?;
+                            let resp_str = format!(
+                                "{}操作{}\n结果：{}",
+                                response.action,
+                                if response.success { "成功" } else { "失败" },
+                                response.data
+                            );
+                            let api = if let Some(group_id) = event.group_id {
+                                Api {
+                                    action: "send_group_msg".into(),
+                                    params: serde_json::from_str(&format!(
+                                        r#"{{"group_id": {}, "message": [{{"type": "text", "data": {{ "text": {:?} }}}}]}}"#,
+                                        group_id, resp_str
+                                    ))?,
+                                    echo: None,
+                                }
+                            } else {
+                                Api {
+                                    action: "send_private_msg".into(),
+                                    params: serde_json::from_str(&format!(
+                                        r#"{{"user_id": {}, "message": [{{"type": "text", "data": {{ "text": {:?} }}}}]}}"#,
+                                        user_id, resp_str
+                                    ))?,
+                                    echo: None,
+                                }
+                            };
+                            Self::send(api).await?;
+                        }
+                    }
+                }
+            }
 
-            // 黑白名单配置
+            // 判断黑白名单配置
             if let Some(group_id) = event.group_id {
-                if !utils::send_by_auth(group_id) {
+                if !utils::send_by_auth(group_id).await? {
                     return Ok(());
                 }
             }

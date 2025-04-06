@@ -2,3 +2,6 @@
 app.toml
 /logs
 /.vscode
+*.db
+*.sqlite
+*.sqlite3

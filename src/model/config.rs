@@ -4,12 +4,18 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use log::LevelFilter;
+use log::info;
+use log::{LevelFilter, error};
+use migration::{Migrator, MigratorTrait};
+use sea_orm::Database;
+use tokio::sync::OnceCell;
 
 pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(|| {
     let config = init_config().unwrap();
     Arc::new(config)
 });
+
+pub static APP_CONFIG_DB: LazyLock<OnceCell<sea_orm::DatabaseConnection>> = LazyLock::new(OnceCell::new);
 
 fn init_config() -> anyhow::Result<AppConfig> {
     let mut config: Option<AppConfig> = None;
@@ -33,16 +39,32 @@ fn init_config() -> anyhow::Result<AppConfig> {
 pub struct AppConfig {
     pub websocket: Option<WebSocketConfig>,
     pub logger: Option<LoggerConfig>,
-    pub blacklist: Option<Vec<i64>>,
-    pub whitelist: Option<Vec<i64>>,
+    pub default_policy: Option<Policy>,
     pub notice: Option<EmailNoticeConfig>,
-    pub online_notice: Option<i64>,
+    pub super_users: Vec<i64>,
+    pub config_db_url: Option<String>,
+}
+
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Policy {
+    /// 允许
+    Allow,
+    /// 拒绝
+    #[default]
+    Deny,
 }
 
 impl AppConfig {
     /// 初始化日志
     pub fn init_logger(&self) -> anyhow::Result<()> {
-        let console_level = self.logger.clone().map(|l| l.level).unwrap_or_default();
+        let logger = self.logger.clone();
+        let exclude = logger.clone().map(|l| l.exclude).unwrap_or_default().unwrap_or(vec![
+            "tungstenite::handshake".into(),
+            "sqlx::query".into(),
+            "sea_orm_migration::migrator".into(),
+        ]);
+        let console_level = logger.map(|l| l.level).unwrap_or_default();
 
         let mut dispatch = fern::Dispatch::new()
             // 自定义输出格式
@@ -62,6 +84,11 @@ impl AppConfig {
                     .level(console_level.into())
                     .chain(std::io::stdout()),
             );
+        for r#mod in exclude {
+            dispatch = dispatch
+                // 禁用指定模块日志
+                .level_for(r#mod, log::LevelFilter::Off)
+        }
         if let Some(log_file) = self.logger.clone().unwrap_or_default().file {
             // 判断输出文件位置是否存在，不存在则创建
             let log_file_path = PathBuf::from_str(&log_file.path).unwrap();
@@ -76,13 +103,27 @@ impl AppConfig {
             )
         }
         dispatch.apply()?;
-
         Ok(())
+    }
+
+    /// 初始化数据库连接
+    pub async fn init_db(&self) -> anyhow::Result<sea_orm::DatabaseConnection> {
+        let db_url = APP_CONFIG
+            .config_db_url
+            .clone()
+            .unwrap_or("sqlite://forward.sqlite?mode=rwc".into());
+        let conn = Database::connect(&db_url).await?;
+        Migrator::up(&conn, None).await?;
+        info!("Database migration completed");
+        if let Err(err) = APP_CONFIG_DB.set(conn.clone()) {
+            error!("Failed to set database connection: {:?}", err);
+        }
+        Ok(conn)
     }
 
     /// 获取上线通知人
     pub fn get_online_notice_target(&self) -> Option<i64> {
-        self.online_notice
+        self.super_users.first().cloned()
     }
 
     /// 获取邮件通知人
@@ -114,6 +155,7 @@ pub struct Server {
 pub struct LoggerConfig {
     pub level: LogLevel,
     pub file: Option<LogFileConfig>,
+    pub exclude: Option<Vec<String>>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone, Default)]

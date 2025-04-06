@@ -1,9 +1,12 @@
-use crate::config::{self, EmailNoticeConfig};
+use crate::{
+    config::{self, EmailNoticeConfig},
+    model::entity::rule,
+};
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType,
     transport::smtp::authentication::Credentials,
 };
-use log::info;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 /// 发送邮件
 pub(crate) async fn send_email(config: EmailNoticeConfig, user_id: &str) -> anyhow::Result<()> {
@@ -57,25 +60,29 @@ fn replace_placeholders(text: &str, map: &[(&str, &str)]) -> String {
 }
 
 /// 判断消息是否应该放行
-pub(crate) fn send_by_auth(group_id: i64) -> bool {
-    let config = config::APP_CONFIG.clone();
-    if let Some(whitelist) = &config.whitelist {
-        if whitelist.contains(&group_id) {
-            return true;
-        } else {
-            info!("group {} is not in whitelist, ignore message", group_id);
-            return false;
-        }
+pub(crate) async fn send_by_auth(group_id: i64) -> anyhow::Result<bool> {
+    let db = config::APP_CONFIG_DB.get().expect("数据库连接未初始化");
+    let default_policy = config::APP_CONFIG.clone().default_policy.clone();
+    let rules = rule::Entity::find()
+        .filter(rule::Column::ChatType.eq(rule::ChatType::Group))
+        .filter(rule::Column::ItemType.eq(rule::ItemType::WhiteList))
+        .all(db)
+        .await?;
+    let white_list: Vec<i64> = rules.iter().map(|rule| rule.chat_id).collect();
+    let rules = rule::Entity::find()
+        .filter(rule::Column::ChatType.eq(rule::ChatType::Group))
+        .filter(rule::Column::ItemType.eq(rule::ItemType::BlackList))
+        .all(db)
+        .await?;
+    let black_list: Vec<i64> = rules.iter().map(|rule| rule.chat_id).collect();
+
+    if white_list.contains(&group_id) {
+        return Ok(true);
     }
-    if let Some(blacklist) = &config.blacklist {
-        if blacklist.contains(&group_id) {
-            info!("group {} is in blacklist, ignore message", group_id);
-            return false;
-        } else {
-            return true;
-        }
+    if black_list.contains(&group_id) {
+        return Ok(false);
     }
-    true
+    Ok(matches!(default_policy.unwrap_or_default(), config::Policy::Allow))
 }
 
 /// 接收ctrl+c信号

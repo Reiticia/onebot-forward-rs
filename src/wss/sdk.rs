@@ -178,7 +178,7 @@ impl SdkSide {
 
         // 黑白名单过滤
         if let Some(Some(group_id)) = api.params.get("group_id").map(|v| v.as_i64()) {
-            if !utils::send_by_auth(group_id) {
+            if !utils::send_by_auth(group_id).await? {
                 return Ok(());
             }
         }
