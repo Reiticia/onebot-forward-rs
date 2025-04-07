@@ -55,6 +55,13 @@ pub enum Policy {
     Deny,
 }
 
+#[macro_export]
+macro_rules! db {
+    () => {
+        &$crate::model::config::APP_CONFIG_DB.get().unwrap().clone()
+    };
+}
+
 impl AppConfig {
     /// 初始化日志
     pub fn init_logger(&self) -> anyhow::Result<()> {

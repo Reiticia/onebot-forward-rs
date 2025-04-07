@@ -5,7 +5,7 @@ use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
 
-use crate::model::config;
+use crate::db;
 use crate::model::entity::rule;
 use crate::model::entity::rule::ItemType;
 
@@ -65,9 +65,6 @@ impl Cli {
 
     /// 处理具体的操作
     async fn handle_action(action: &Action, item_type: ItemType) -> anyhow::Result<Response> {
-        let db = config::APP_CONFIG_DB
-            .get()
-            .ok_or_else(|| anyhow::anyhow!("数据库连接未初始化"))?;
         let action_str = match item_type {
             ItemType::BlackList => "黑名单",
             ItemType::WhiteList => "白名单",
@@ -86,7 +83,7 @@ impl Cli {
                 if rule::Entity::find()
                     .filter(rule::Column::ChatId.eq(*id))
                     .filter(rule::Column::ItemType.eq(item_type))
-                    .one(db)
+                    .one(db!())
                     .await?
                     .is_some()
                 {
@@ -97,7 +94,7 @@ impl Cli {
                     };
                     return Ok(message);
                 }
-                rule.save(db).await?;
+                rule.save(db!()).await?;
                 info!("{:?} add {} success", item_type, id);
                 let message = Response {
                     action: format!("添加{}", action_str),
@@ -111,7 +108,7 @@ impl Cli {
                 let row_affected = rule::Entity::delete_many()
                     .filter(rule::Column::ChatId.eq(*id))
                     .filter(rule::Column::ItemType.eq(item_type))
-                    .exec(db)
+                    .exec(db!())
                     .await?
                     .rows_affected;
                 if row_affected == 0 {
@@ -134,7 +131,7 @@ impl Cli {
                 // 列表操作的逻辑
                 let rules = rule::Entity::find()
                     .filter(rule::Column::ItemType.eq(item_type))
-                    .all(db)
+                    .all(db!())
                     .await?;
                 let rules: Vec<i64> = rules.iter().map(|rule| rule.chat_id).collect::<Vec<_>>();
                 let message = Response {

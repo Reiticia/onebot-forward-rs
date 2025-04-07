@@ -1,5 +1,6 @@
 use crate::{
     config::{self, EmailNoticeConfig},
+    db,
     model::entity::rule,
 };
 use lettre::{
@@ -62,18 +63,17 @@ fn replace_placeholders(text: &str, map: &[(&str, &str)]) -> String {
 
 /// 判断消息是否应该放行
 pub(crate) async fn send_by_auth(group_id: i64) -> anyhow::Result<bool> {
-    let db = config::APP_CONFIG_DB.get().expect("数据库连接未初始化");
     let default_policy = config::APP_CONFIG.clone().default_policy.clone();
     let rules = rule::Entity::find()
         .filter(rule::Column::ChatType.eq(rule::ChatType::Group))
         .filter(rule::Column::ItemType.eq(rule::ItemType::WhiteList))
-        .all(db)
+        .all(db!())
         .await?;
     let white_list: Vec<i64> = rules.iter().map(|rule| rule.chat_id).collect();
     let rules = rule::Entity::find()
         .filter(rule::Column::ChatType.eq(rule::ChatType::Group))
         .filter(rule::Column::ItemType.eq(rule::ItemType::BlackList))
-        .all(db)
+        .all(db!())
         .await?;
     let black_list: Vec<i64> = rules.iter().map(|rule| rule.chat_id).collect();
 
