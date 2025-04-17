@@ -11,10 +11,6 @@ repos:
       - id: end-of-file-fixer
       - id: mixed-line-ending
       - id: trailing-whitespace
-  - repo: https://github.com/psf/black
-    rev: 19.3b0
-    hooks:
-      - id: black
   - repo: local
     hooks:
       - id: cargo-fmt
@@ -34,7 +30,7 @@ repos:
       - id: cargo-clippy
         name: cargo clippy
         description: Lint rust sources
-        entry: bash -c 'cargo clippy --all-targets --all-features --tests --benches -- -D warnings'
+        entry: bash -c 'cargo clippy --fix --allow-dirty --all-targets --all-features --tests --benches -- -D warnings'
         language: rust
         files: \.rs$
         pass_filenames: false
