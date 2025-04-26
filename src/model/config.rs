@@ -1,6 +1,5 @@
 use std::{
-    path::PathBuf,
-    str::FromStr,
+    io::Write,
     sync::{Arc, LazyLock},
 };
 
@@ -9,6 +8,8 @@ use log::{LevelFilter, error};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
 use tokio::sync::OnceCell;
+
+use super::log::DailyFileAdapter;
 
 pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(|| {
     let config = init_config().unwrap();
@@ -83,31 +84,27 @@ impl AppConfig {
                     record.level(),
                     message
                 ))
-            })
-            // 控制台输出配置
-            .chain(
-                fern::Dispatch::new()
-                    // 控制台日志等级
-                    .level(console_level.into())
-                    .chain(std::io::stdout()),
-            );
+            });
         for r#mod in exclude {
             dispatch = dispatch
                 // 禁用指定模块日志
                 .level_for(r#mod, log::LevelFilter::Off)
         }
+        // 控制台输出配置
+        dispatch = dispatch.chain(
+            fern::Dispatch::new()
+                // 控制台日志等级
+                .level(console_level.into())
+                .chain(std::io::stdout()),
+        );
         if let Some(log_file) = self.logger.clone().unwrap_or_default().file {
-            // 判断输出文件位置是否存在，不存在则创建
-            let log_file_path = PathBuf::from_str(&log_file.path).unwrap();
-            if !log_file_path.parent().unwrap().exists() {
-                std::fs::create_dir_all(log_file_path.parent().unwrap())?;
-            }
-
+            let daily_file = DailyFileAdapter::new(&log_file.dir)?;
             dispatch = dispatch.chain(
                 fern::Dispatch::new()
+                    // 日志文件日志
                     .level(log_file.level.into())
-                    .chain(fern::log_file(log_file.path)?),
-            )
+                    .chain(Box::new(daily_file) as Box<dyn Write + Send>),
+            );
         }
         dispatch.apply()?;
         Ok(())
@@ -192,7 +189,7 @@ impl From<LogLevel> for LevelFilter {
 
 #[derive(serde::Deserialize, Debug, Clone, Default)]
 pub struct LogFileConfig {
-    pub path: String,
+    pub dir: String,
     pub level: LogLevel,
 }
 
