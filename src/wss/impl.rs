@@ -20,6 +20,7 @@ use tokio_tungstenite::{
 use crate::{
     Cli,
     config::{self, WebSocketConfig},
+    ctrl_c_signal,
     model::onebot::{Api, ApiResponse, Event},
     utils,
     wss::sdk::SdkSide,
@@ -82,7 +83,7 @@ impl ImplSide {
                     _ = sleep_task => {
                         warn!("faile to connect to server, retry in 5 seconds")
                     }
-                    _ = utils::ctrl_c_signal() => {
+                    _ = ctrl_c_signal!() => {
                         info!("receive interupt signal, exit connect");
                         break;
                     }
@@ -133,7 +134,7 @@ impl ImplSide {
                         }
                     }
                 },
-                _ = utils::ctrl_c_signal() => {
+                _ = ctrl_c_signal!() => {
                     info!("receive interupt signal, exit receive");
                     interupt_flag.store(true, Ordering::SeqCst);
                     break;
@@ -222,10 +223,8 @@ impl ImplSide {
             }
 
             // 判断黑白名单配置
-            if let Some(group_id) = event.group_id {
-                if !utils::send_by_auth(group_id).await? {
-                    return Ok(());
-                }
+            if !utils::send_by_auth(event.group_id, event.user_id).await {
+                return Ok(());
             }
             SdkSide::broadcast_message(event).await?;
         }
@@ -282,7 +281,7 @@ impl ImplSide {
 
             tokio::select! {
                 _ = sleep_future => (),
-                _ = utils::ctrl_c_signal() => {
+                _ = ctrl_c_signal!() => {
                     info!("receive interupt signal, exit heartbeat_active");
                     break;
                 }

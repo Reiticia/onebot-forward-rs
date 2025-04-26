@@ -6,6 +6,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     pub chat_id: i64,
+    pub group_chat_id: Option<i64>,
     pub chat_type: ChatType,
     pub item_type: ItemType,
     pub created_at: DateTimeWithTimeZone,
@@ -17,8 +18,8 @@ pub struct Model {
 pub enum ChatType {
     #[sea_orm(string_value = "group")]
     Group,
-    #[sea_orm(string_value = "private")]
-    Private,
+    #[sea_orm(string_value = "user")]
+    User,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, EnumIter, DeriveActiveEnum)]

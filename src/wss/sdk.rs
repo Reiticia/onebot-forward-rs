@@ -23,6 +23,7 @@ use tokio_tungstenite::{
 
 use crate::{
     config::WebSocketConfig,
+    ctrl_c_signal,
     model::onebot::{Api, ApiResponse, ConnectMessage, Event},
     utils,
     wss::r#impl::ImplSide,
@@ -63,7 +64,7 @@ impl SdkSide {
                     }
                     tokio::spawn(Self::handle_connection(stream, addr));
                 },
-                _ = utils::ctrl_c_signal() => {
+                _ = ctrl_c_signal!() => {
                     break;
                 }
             }
@@ -152,7 +153,7 @@ impl SdkSide {
                         }
                     }
                 },
-                _ = utils::ctrl_c_signal() => {
+                _ = ctrl_c_signal!() => {
                     info!("receive ctrl-c signal");
                     break;
                 }
@@ -177,8 +178,8 @@ impl SdkSide {
         let mut ws_server = SDK_SIDE.write().await;
 
         // 黑白名单过滤
-        if let Some(Some(group_id)) = api.params.get("group_id").map(|v| v.as_i64()) {
-            if !utils::send_by_auth(group_id).await? {
+        if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64()) {
+            if !utils::send_by_auth(group_id, None).await {
                 return Ok(());
             }
         }
