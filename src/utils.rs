@@ -9,7 +9,7 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType,
     transport::smtp::authentication::Credentials,
 };
-use log::info;
+use log::{error, info};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 /// 发送邮件
@@ -85,6 +85,20 @@ static WHITE_GROUP_LIST: LazyLock<GroupInfoList> = LazyLock::new(|| Arc::new(RwL
 static BLACK_GROUP_LIST: LazyLock<GroupInfoList> = LazyLock::new(|| Arc::new(RwLock::new(Vec::new())));
 static WHITE_USER_LIST: LazyLock<UserList> = LazyLock::new(|| Arc::new(RwLock::new(Vec::new())));
 static BLACK_USER_LIST: LazyLock<UserList> = LazyLock::new(|| Arc::new(RwLock::new(Vec::new())));
+
+pub async fn refresh_cache() {
+    // 初始化白名单和黑名单
+    if let Err(err) = reload_database_data(vec![
+        ReloadType::WhileGroup,
+        ReloadType::BlackGroup,
+        ReloadType::WhileUser,
+        ReloadType::BlackUser,
+    ])
+    .await
+    {
+        error!("Failed to reload database data: {}", err);
+    }
+}
 
 /// 重新加载数据库数据
 pub async fn reload_database_data(types: Vec<ReloadType>) -> anyhow::Result<()> {

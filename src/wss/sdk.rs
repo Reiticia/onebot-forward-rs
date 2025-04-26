@@ -40,6 +40,10 @@ pub struct SdkSide {
     pub echo_map: HashMap<String, Arc<RwLock<Writer>>>,
 }
 
+static SAME_API: LazyLock<Arc<RwLock<HashMap<String, bool>>>> = LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+static ECHO_MAP: LazyLock<Arc<RwLock<HashMap<String, String>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+
 impl SdkSide {
     /// 创建WS服务
     pub async fn start(websocket: &WebSocketConfig) -> anyhow::Result<()> {
@@ -177,6 +181,32 @@ impl SdkSide {
         let echo = &api.echo;
         let mut ws_server = SDK_SIDE.write().await;
 
+        // 所有重复的API请求只做一次鉴权
+        {
+            let mut api_clone = api.clone();
+            let echo = echo.clone();
+            api_clone.echo = None;
+            let api_str = serde_json::to_string(&api_clone)?;
+            if let Some(res) = SAME_API.read().await.get(&api_str) {
+                if !res {
+                    return Ok(());
+                }
+            } else {
+                // 黑白名单过滤
+                ECHO_MAP
+                    .write()
+                    .await
+                    .insert(echo.clone().unwrap_or_default(), api_str.clone());
+                if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64()) {
+                    if !utils::send_by_auth(group_id, None).await {
+                        SAME_API.write().await.insert(api_str, false);
+                        return Ok(());
+                    }
+                }
+                SAME_API.write().await.insert(api_str, true);
+            }
+        }
+
         // 黑白名单过滤
         if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64()) {
             if !utils::send_by_auth(group_id, None).await {
@@ -214,6 +244,9 @@ impl SdkSide {
                 .await
                 .send(Message::Text(serde_json::to_string(&msg)?.into()))
                 .await?;
+        }
+        if let Some(api_str) = ECHO_MAP.write().await.remove(echo) {
+            SAME_API.write().await.remove(&api_str);
         }
         Ok(())
     }

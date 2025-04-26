@@ -9,6 +9,8 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
 use tokio::sync::OnceCell;
 
+use crate::utils::refresh_cache;
+
 use super::log::DailyFileAdapter;
 
 pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(|| {
@@ -122,6 +124,7 @@ impl AppConfig {
         if let Err(err) = APP_CONFIG_DB.set(conn.clone()) {
             error!("Failed to set database connection: {:?}", err);
         }
+        refresh_cache().await;
         Ok(conn)
     }
 
