@@ -23,7 +23,7 @@ logger:
     - sqlx::query
     - sea_orm_migration::migrator
   file:
-    path: logs/app.log
+    dir: logs
     level: warn
 
 default_policy: deny
@@ -69,7 +69,7 @@ config_db_url: sqlite://forward.sqlite?mode=rwc
       "sea_orm_migration::migrator"
     ],
     "file": {
-      "path": "logs/app.log",
+      "dir": "logs",
       "level": "warn"
     }
   },
@@ -117,7 +117,7 @@ exclude = [
 ]
 
 [logger.file]
-path = "logs/app.log"
+dir = "logs"
 level = "warn"
 
 
