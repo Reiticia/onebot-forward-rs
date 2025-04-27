@@ -31,7 +31,7 @@ impl DailyFile {
     fn check_date(&mut self) -> io::Result<()> {
         let new_date = Local::now().format("%Y-%m-%d").to_string();
         if self.current_date != new_date {
-            let path = format!("{}-{}.log", self.base_path, new_date);
+            let path = format!("{}/{}.log", self.base_path, new_date);
             let new_file = OpenOptions::new().create(true).append(true).open(path)?;
             self.file = new_file;
             self.current_date = new_date;
