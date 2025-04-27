@@ -22,7 +22,7 @@ use crate::{
     config::{self, WebSocketConfig},
     ctrl_c_signal,
     model::onebot::{Api, ApiResponse, Event},
-    utils,
+    utils::{DatabaseCache, send_email},
     wss::sdk::SdkSide,
 };
 
@@ -74,7 +74,7 @@ impl ImplSide {
                             Err(err) => error!("Connection error: {}", err),
                         }
                         if let Some(ref notice) = is_notice {
-                            utils::send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await?;
+                            send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await?;
                         }
                         IMPL_SIDE.write().await.writer = None;
                         IMPL_SIDE.write().await.user_id = None;
@@ -223,7 +223,7 @@ impl ImplSide {
             }
 
             // 判断黑白名单配置
-            if !utils::send_by_auth(event.group_id, event.user_id).await {
+            if !DatabaseCache::send_by_auth(event.group_id, event.user_id).await {
                 return Ok(());
             }
             SdkSide::broadcast_message(event).await?;

@@ -9,7 +9,7 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
 use tokio::sync::OnceCell;
 
-use crate::utils::refresh_cache;
+use crate::utils::DatabaseCache;
 
 use super::log::DailyFileAdapter;
 
@@ -124,7 +124,7 @@ impl AppConfig {
         if let Err(err) = APP_CONFIG_DB.set(conn.clone()) {
             error!("Failed to set database connection: {:?}", err);
         }
-        refresh_cache().await;
+        DatabaseCache::load().await;
         Ok(conn)
     }
 

@@ -9,8 +9,8 @@ use sea_orm::QueryFilter;
 use crate::db;
 use crate::model::entity::rule;
 use crate::model::entity::rule::ItemType;
+use crate::utils::DatabaseCache;
 use crate::utils::ReloadType;
-use crate::utils::reload_database_data;
 
 // 顶层命令行结构
 #[derive(Parser, Debug)]
@@ -113,7 +113,7 @@ impl Cli {
             },
         };
 
-        if let Err(err) = reload_database_data(reload_type).await {
+        if let Err(err) = DatabaseCache::reload_database_data(reload_type).await {
             error!("database execute error {:?}", err);
         }
 

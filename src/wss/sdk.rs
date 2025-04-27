@@ -25,7 +25,7 @@ use crate::{
     config::WebSocketConfig,
     ctrl_c_signal,
     model::onebot::{Api, ApiResponse, ConnectMessage, Event},
-    utils,
+    utils::DatabaseCache,
     wss::r#impl::ImplSide,
 };
 
@@ -198,7 +198,7 @@ impl SdkSide {
                     .await
                     .insert(echo.clone().unwrap_or_default(), api_str.clone());
                 if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64()) {
-                    if !utils::send_by_auth(group_id, None).await {
+                    if !DatabaseCache::send_by_auth(group_id, None).await {
                         SAME_API.write().await.insert(api_str, false);
                         return Ok(());
                     }
@@ -209,7 +209,7 @@ impl SdkSide {
 
         // 黑白名单过滤
         if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64()) {
-            if !utils::send_by_auth(group_id, None).await {
+            if !DatabaseCache::send_by_auth(group_id, None).await {
                 return Ok(());
             }
         }
