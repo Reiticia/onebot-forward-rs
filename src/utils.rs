@@ -9,7 +9,7 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType,
     transport::smtp::authentication::Credentials,
 };
-use log::{error, info};
+use log::{debug, error};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 /// 发送邮件
@@ -191,14 +191,14 @@ impl DatabaseCache {
                 if group.id == group_id {
                     if let Some(user_id) = user_id {
                         if group.exclude_user.contains(&user_id) || BLACK_USER_LIST.read().unwrap().contains(&user_id) {
-                            info!("group {} is in whilelist, but user {} was exclude", group_id, user_id);
+                            debug!("group {} is in whilelist, but user {} was exclude", group_id, user_id);
                             return false;
                         } else {
-                            info!("group {} is in whitelist, send message", group_id);
+                            debug!("group {} is in whitelist, send message", group_id);
                             return true;
                         }
                     } else {
-                        info!("group {} is in whitelist, send message", group_id);
+                        debug!("group {} is in whitelist, send message", group_id);
                         return true;
                     }
                 }
@@ -207,14 +207,14 @@ impl DatabaseCache {
                 if group.id == group_id {
                     if let Some(user_id) = user_id {
                         if group.exclude_user.contains(&user_id) || WHITE_USER_LIST.read().unwrap().contains(&user_id) {
-                            info!("group {} is in blacklist, but user {} was exclude", group_id, user_id);
+                            debug!("group {} is in blacklist, but user {} was exclude", group_id, user_id);
                             return true;
                         } else {
-                            info!("group {} is in blacklist, send message", group_id);
+                            debug!("group {} is in blacklist, send message", group_id);
                             return false;
                         }
                     } else {
-                        info!("group {} is in blacklist, send message", group_id);
+                        debug!("group {} is in blacklist, send message", group_id);
                         return false;
                     }
                 }
