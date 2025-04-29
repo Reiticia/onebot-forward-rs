@@ -21,20 +21,25 @@ pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(|| {
 pub static APP_CONFIG_DB: LazyLock<OnceCell<sea_orm::DatabaseConnection>> = LazyLock::new(OnceCell::new);
 
 fn init_config() -> anyhow::Result<AppConfig> {
-    let mut config: Option<AppConfig> = None;
-    if let Ok(config_str) = std::fs::read_to_string("app.yml") {
-        config = Some(serde_yaml::from_str(&config_str)?);
-    }
-    if let Ok(config_str) = std::fs::read_to_string("app.yaml") {
-        config = Some(serde_yaml::from_str(&config_str)?);
-    }
-    if let Ok(config_str) = std::fs::read_to_string("app.json") {
-        config = Some(serde_json::from_str(&config_str)?);
-    }
-    if let Ok(config_str) = std::fs::read_to_string("app.toml") {
-        config = Some(toml::from_str(&config_str)?);
-    };
-    let config = config.ok_or_else(|| anyhow::anyhow!("配置文件 app.yml/yaml/json/toml 不存在"))?;
+    let config = std::fs::read_to_string("app.yml")
+        .ok()
+        .and_then(|config_str| serde_yaml::from_str(&config_str).ok())
+        .or_else(|| {
+            std::fs::read_to_string("app.yaml")
+                .ok()
+                .and_then(|config_str| serde_yaml::from_str(&config_str).ok())
+        })
+        .or_else(|| {
+            std::fs::read_to_string("app.json")
+                .ok()
+                .and_then(|config_str| serde_json::from_str(&config_str).ok())
+        })
+        .or_else(|| {
+            std::fs::read_to_string("app.toml")
+                .ok()
+                .and_then(|config_str| toml::from_str(&config_str).ok())
+        })
+        .ok_or_else(|| anyhow::anyhow!("配置文件 app.yml/yaml/json/toml 不存在"))?;
     Ok(config)
 }
 
