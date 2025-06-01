@@ -18,7 +18,7 @@ pub struct ApiResponse {
     pub data: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    pub echo: String,
+    pub echo: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

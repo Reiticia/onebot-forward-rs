@@ -236,17 +236,18 @@ impl SdkSide {
     /// 将API调用返回给调用方
     pub async fn response_message(msg: ApiResponse) -> anyhow::Result<()> {
         trace!("feedback response: {:?}", msg);
-        let echo = &msg.echo;
-        let mut ws_server = SDK_SIDE.write().await;
-        if let Some(writer) = ws_server.echo_map.remove(echo) {
-            writer
-                .write()
-                .await
-                .send(Message::Text(serde_json::to_string(&msg)?.into()))
-                .await?;
-        }
-        if let Some(api_str) = ECHO_MAP.write().await.remove(echo) {
-            SAME_API.write().await.remove(&api_str);
+        if let Some(echo) = &msg.echo {
+            let mut ws_server = SDK_SIDE.write().await;
+            if let Some(writer) = ws_server.echo_map.remove(echo) {
+                writer
+                    .write()
+                    .await
+                    .send(Message::Text(serde_json::to_string(&msg)?.into()))
+                    .await?;
+            }
+            if let Some(api_str) = ECHO_MAP.write().await.remove(echo) {
+                SAME_API.write().await.remove(&api_str);
+            }
         }
         Ok(())
     }

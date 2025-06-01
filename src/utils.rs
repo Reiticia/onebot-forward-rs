@@ -10,6 +10,7 @@ use lettre::{
     transport::smtp::authentication::Credentials,
 };
 use log::{debug, error};
+use rand::Rng;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 /// 发送邮件
@@ -222,6 +223,18 @@ impl DatabaseCache {
         }
         matches!(default_policy.unwrap_or_default(), config::Policy::Allow)
     }
+}
+
+pub fn generate_random_string(len: usize) -> String {
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::rng();
+    let random_string: String = (0..len)
+        .map(|_| {
+            let idx = rng.random_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect();
+    random_string
 }
 
 #[macro_export]

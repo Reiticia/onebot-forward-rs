@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{
         Arc, LazyLock, OnceLock,
         atomic::{AtomicBool, AtomicI64, Ordering},
@@ -11,7 +12,10 @@ use futures_util::{
     stream::{SplitSink, SplitStream, StreamExt},
 };
 use log::{debug, error, info, trace, warn};
-use tokio::{net::TcpStream, sync::RwLock};
+use tokio::{
+    net::TcpStream,
+    sync::{RwLock, mpsc},
+};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
     tungstenite::{Message, client::IntoClientRequest},
@@ -22,12 +26,13 @@ use crate::{
     config::{self, WebSocketConfig},
     ctrl_c_signal,
     model::onebot::{Api, ApiResponse, Event},
-    utils::{DatabaseCache, send_email},
+    utils::{DatabaseCache, generate_random_string, send_email},
     wss::sdk::SdkSide,
 };
 
 pub type Writer = SplitSink<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>;
 pub type Reader = SplitStream<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>;
+type EchoTxMap = Arc<RwLock<HashMap<String, mpsc::Sender<ApiResponse>>>>;
 
 #[derive(Debug, Default)]
 pub struct ImplSide {
@@ -38,6 +43,7 @@ pub struct ImplSide {
 static IMPL_SIDE: LazyLock<RwLock<ImplSide>> = LazyLock::new(|| RwLock::new(ImplSide::default()));
 static LAST_HEARTBEAT_TIME: AtomicI64 = AtomicI64::new(0);
 static HEARTBEAT_INTERVAL: OnceLock<i64> = OnceLock::new();
+static ECHO_TX_MAP: LazyLock<EchoTxMap> = LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 impl ImplSide {
     /// 创建WS连接
@@ -177,6 +183,8 @@ impl ImplSide {
                 LAST_HEARTBEAT_TIME.store(event.time, Ordering::SeqCst);
                 // 开启心跳检测事件
                 tokio::spawn(Self::heartbeat_active(active.clone()));
+                // 开启定时任务检查账号状态
+                tokio::spawn(Self::active_check(active.clone()));
             }
             if event.post_type == "meta_event" && event.meta_event_type == Some("heartbeat".into()) {
                 LAST_HEARTBEAT_TIME.store(event.time, Ordering::SeqCst);
@@ -229,7 +237,15 @@ impl ImplSide {
             SdkSide::broadcast_message(event).await?;
         }
         if let Ok(resposne) = serde_json::from_str::<ApiResponse>(msg) {
-            SdkSide::response_message(resposne).await?;
+            // 判断是否由内部发出Api的响应消息
+            if let Some(echo) = resposne.echo.clone() {
+                if let Some(tx) = ECHO_TX_MAP.read().await.get(&echo) {
+                    info!("receive internal api response");
+                    tx.send(resposne).await?;
+                } else {
+                    SdkSide::response_message(resposne).await?;
+                }
+            }
         }
         Ok(())
     }
@@ -263,7 +279,7 @@ impl ImplSide {
                         "last_heartbeat: {:?}, heartbeat_time: {}, duration: {:?}, try to reconnect",
                         last_heartbeat, heartbeat_time, duration
                     );
-                    active.store(false, Ordering::SeqCst);
+                    Self::send_active_check_message(active.clone()).await;
                     info!(
                         "{} heartbeat timeout, try to reconnect",
                         IMPL_SIDE.read().await.user_id.unwrap_or(0)
@@ -290,8 +306,71 @@ impl ImplSide {
         info!("heartbeat active task exit")
     }
 
+    /// 检查登录号状态是否存活
+    async fn active_check(active: Arc<AtomicBool>) {
+        info!("start active check task");
+
+        let mut interval = tokio::time::interval(time::Duration::from_secs(3600)); // 每小时触发一次
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    info!("check account login state");
+                    Self::send_active_check_message(active.clone()).await;
+                }
+                _ = ctrl_c_signal!() => {
+                    info!("receive interupt signal, exit active_check");
+                    break;
+                }
+                _ = async { while active.load(Ordering::SeqCst) { tokio::time::sleep(time::Duration::from_millis(100)).await; } } => {
+                    info!("active flag set to false, exit active_check");
+                    break;
+                }
+            }
+        }
+        info!("active check task exit");
+    }
+
     /// 判断协议端是否存活
     pub async fn alive() -> Option<i64> {
         IMPL_SIDE.read().await.user_id
+    }
+
+    /// 发送存活请求到协议端
+    async fn send_active_check_message(active: Arc<AtomicBool>) {
+        let echo = generate_random_string(4);
+        let api = Api {
+            action: "get_status".into(),
+            params: HashMap::new(),
+            echo: Some(echo.clone()),
+        };
+        let (tx, mut rx) = mpsc::channel::<ApiResponse>(1);
+        let mut echo_tx_map_writer = ECHO_TX_MAP.write().await;
+        echo_tx_map_writer.insert(echo.clone(), tx);
+        tokio::spawn(async move {
+            if let Some(api_response) = rx.recv().await {
+                info!("receive get_status api response");
+                let data = api_response.data;
+                let online = data
+                    .get("online")
+                    .map(|online| online.as_bool().unwrap_or_default())
+                    .unwrap_or_default();
+                let good = data
+                    .get("good")
+                    .map(|online| online.as_bool().unwrap_or_default())
+                    .unwrap_or_default();
+                if !online || !good {
+                    // 判断为登录账号已下线
+                    active.store(false, Ordering::SeqCst);
+                }
+            }
+        });
+        // 如果请求发送失败则移除该通道
+        if ImplSide::send(api).await.is_err() {
+            error!("send get_status api failed");
+            echo_tx_map_writer.remove(&echo);
+        } else {
+            info!("send get_status api success");
+        }
     }
 }
