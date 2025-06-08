@@ -22,7 +22,7 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    Cli,
+    BWListCli,
     config::{self, WebSocketConfig},
     ctrl_c_signal,
     model::onebot::{Api, ApiResponse, Event},
@@ -80,7 +80,9 @@ impl ImplSide {
                             Err(err) => error!("Connection error: {}", err),
                         }
                         if let Some(ref notice) = is_notice {
-                            send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await?;
+                            if let Err(err) = send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await {
+                                error!("email send fail: {:?}", err);
+                            }
                         }
                         IMPL_SIDE.write().await.writer = None;
                         IMPL_SIDE.write().await.user_id = None;
@@ -196,7 +198,8 @@ impl ImplSide {
                 if let Some(user_id) = event.user_id {
                     // 如果是超级管理员，则匹配请求命令
                     if config::APP_CONFIG.super_users.contains(&user_id) {
-                        if let Ok(command) = Cli::parse_command(event.raw_message.clone().unwrap_or_default().as_str())
+                        if let Ok(command) =
+                            BWListCli::parse_command(event.raw_message.clone().unwrap_or_default().as_str())
                         {
                             let response = command.execute().await?;
                             let resp_str = format!(

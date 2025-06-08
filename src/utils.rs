@@ -15,17 +15,27 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 /// 发送邮件
 pub(crate) async fn send_email(config: EmailNoticeConfig, user_id: &str) -> anyhow::Result<()> {
-    let from = format!("Bot <{}>", config.username);
-    let to = format!("Master <{}>", config.receiver);
+    let receiver: &str = &config.receiver;
     let email_template = config.mail.clone().unwrap_or_default();
     let body = replace_placeholders(&email_template.body, &[("bot_id", user_id)]);
+    send_email_with_template(&config, receiver, &email_template.subject, &body).await?;
 
+    Ok(())
+}
+
+pub(crate) async fn send_email_with_template(
+    config: &EmailNoticeConfig,
+    receiver: &str,
+    subject: &str,
+    body: &str,
+) -> anyhow::Result<()> {
+    let from = format!("Bot <{}>", config.username);
     let email = Message::builder()
         .from(from.parse()?)
-        .to(to.parse()?)
-        .subject(email_template.subject)
+        .to(receiver.parse()?)
+        .subject(subject)
         .header(ContentType::TEXT_PLAIN)
-        .body(body)?;
+        .body(body.to_string())?;
 
     let creds = Credentials::new(config.username.clone(), config.password.clone());
 

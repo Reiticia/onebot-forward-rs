@@ -15,14 +15,14 @@ use crate::utils::ReloadType;
 // 顶层命令行结构
 #[derive(Parser, Debug)]
 #[clap(no_binary_name = true)] // 忽略默认的二进制名称
-pub(crate) struct Cli {
+pub(crate) struct BWListCli {
     #[clap(subcommand)]
-    command: Commands, // 子命令：黑名单或白名单
+    command: BWListCommands, // 子命令：黑名单或白名单
 }
 
 // 子命令枚举
 #[derive(Subcommand, Debug)]
-enum Commands {
+enum BWListCommands {
     #[clap(name = "黑名单")]
     Blacklist {
         #[clap(subcommand)]
@@ -70,16 +70,16 @@ pub struct Response {
     pub data: String,
 }
 
-impl Cli {
+impl BWListCli {
     pub fn parse_command(command: &str) -> anyhow::Result<Self> {
         let args: Vec<&str> = command.split_whitespace().collect();
-        Cli::try_parse_from(args).map_err(|err| anyhow::anyhow!(err.to_string()))
+        BWListCli::try_parse_from(args).map_err(|err| anyhow::anyhow!(err.to_string()))
     }
 
     pub async fn execute(&self) -> anyhow::Result<Response> {
         match &self.command {
-            Commands::Blacklist { action } => Self::handle_action(action, ItemType::BlackList).await,
-            Commands::Whitelist { action } => Self::handle_action(action, ItemType::WhiteList).await,
+            BWListCommands::Blacklist { action } => Self::handle_action(action, ItemType::BlackList).await,
+            BWListCommands::Whitelist { action } => Self::handle_action(action, ItemType::WhiteList).await,
         }
     }
 
@@ -307,14 +307,14 @@ mod tests {
     #[test]
     fn test_parse_command_create_group() {
         let command = "黑名单 添加群 123";
-        let cli = Cli::parse_command(command);
+        let cli = BWListCli::parse_command(command);
         println!("{:?}", cli);
     }
 
     #[test]
     fn test_parse_command_create_user() {
         let command = "黑名单 添加人 123";
-        let cli = Cli::parse_command(command);
+        let cli = BWListCli::parse_command(command);
         println!("{:?}", cli);
     }
 }
