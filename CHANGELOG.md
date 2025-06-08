@@ -1,3 +1,11 @@
+# 0.9.0
+
+## 启动方式修改
+
+- onebot-forward-rs wss 正向WS服务启动
+- onebot-forward-rs wsc 反向WS服务启动（未实现）
+- onebot-forward-rs et 邮件发送测试
+
 # 0.8.0
 
 1. 增加每小时一次的账号状态检测

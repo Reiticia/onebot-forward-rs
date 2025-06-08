@@ -1,5 +1,11 @@
 # onebot 协议转发
 
+## 启动方式
+
+- onebot-forward-rs wss 正向WS服务启动
+- onebot-forward-rs wsc 反向WS服务启动（未实现）
+- onebot-forward-rs et 邮件发送测试
+
 配置文件示例
 
 * app.yaml/app.yml 示例
