@@ -25,7 +25,10 @@ use crate::{
     BWListCli,
     config::{self, WebSocketConfig},
     ctrl_c_signal,
-    model::onebot::{Api, ApiResponse, Event},
+    model::{
+        app::InteruptReason,
+        onebot::{Api, ApiResponse, Event},
+    },
     utils::{DatabaseCache, generate_random_string, send_email},
     wss::sdk::SdkSide,
 };
@@ -44,6 +47,8 @@ static IMPL_SIDE: LazyLock<RwLock<ImplSide>> = LazyLock::new(|| RwLock::new(Impl
 static LAST_HEARTBEAT_TIME: AtomicI64 = AtomicI64::new(0);
 static HEARTBEAT_INTERVAL: OnceLock<i64> = OnceLock::new();
 static ECHO_TX_MAP: LazyLock<EchoTxMap> = LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+/// 是否为连接断开，用于决定在连接断开后重连时是否发送邮件
+static DISCONNECT: AtomicBool = AtomicBool::new(false);
 
 impl ImplSide {
     /// 创建WS连接
@@ -70,18 +75,21 @@ impl ImplSide {
                 tokio::select! {
                     Ok((ws, _resp)) = connect_task => {
                         info!("connect to server {} success", url);
+                        DISCONNECT.store(false, Ordering::SeqCst);
                         match Self::handle_connect(ws).await {
                             Ok(signal) => {
-                                if signal != 0 {
-                                    info!("receive signal: {}, exit connect", signal);
+                                if matches!(signal, InteruptReason::ShutDown) {
+                                    info!("receive signal: {:?}, exit connect", signal);
                                     break;
                                 }
                             },
                             Err(err) => error!("Connection error: {}", err),
                         }
                         if let Some(ref notice) = is_notice {
-                            if let Err(err) = send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await {
-                                error!("email send fail: {:?}", err);
+                            if DISCONNECT.load(Ordering::SeqCst) {
+                                if let Err(err) = send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await {
+                                    error!("email send fail: {:?}", err);
+                                }
                             }
                         }
                         IMPL_SIDE.write().await.writer = None;
@@ -103,14 +111,14 @@ impl ImplSide {
     }
 
     /// 处理消息
-    async fn handle_connect(ws: WebSocketStream<MaybeTlsStream<TcpStream>>) -> anyhow::Result<i64> {
+    async fn handle_connect(ws: WebSocketStream<MaybeTlsStream<TcpStream>>) -> anyhow::Result<InteruptReason> {
         let (writer, ref mut reader) = ws.split();
         IMPL_SIDE.write().await.writer = Some(writer);
         Self::receive(reader).await
     }
 
     /// 接收消息
-    async fn receive(reader: &mut Reader) -> anyhow::Result<i64> {
+    async fn receive(reader: &mut Reader) -> anyhow::Result<InteruptReason> {
         let active = Arc::new(AtomicBool::new(true));
         let interupt_flag = AtomicBool::new(false);
 
@@ -150,9 +158,9 @@ impl ImplSide {
             }
         }
         if interupt_flag.load(Ordering::SeqCst) {
-            Ok(-1)
+            Ok(InteruptReason::ShutDown)
         } else {
-            Ok(0)
+            Ok(InteruptReason::ReConnect)
         }
     }
 
@@ -165,6 +173,7 @@ impl ImplSide {
             {
                 // 连接成功事件
                 info!("bot connect success");
+
                 // 发送消息通知
                 if let Some(user_id) = config::APP_CONFIG.get_online_notice_target() {
                     let connect_msg = "协议端已连接";
@@ -365,6 +374,11 @@ impl ImplSide {
                 if !online || !good {
                     // 判断为登录账号已下线
                     active.store(false, Ordering::SeqCst);
+                } else {
+                    // 如果断开连接状态位为 false 则将其设置为 true，以便在连接中断时发送邮件提醒
+                    if !DISCONNECT.load(Ordering::SeqCst) {
+                        DISCONNECT.store(true, Ordering::SeqCst);
+                    }
                 }
             }
         });
