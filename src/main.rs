@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
         StartUpCommands::WebSocketServer => {
             // 启用正向WS模式
             if let Some(websocket) = config::APP_CONFIG.websocket.clone() {
-                wss::r#impl::ImplSide::connect(&websocket).await?;
+                wss::r#impl::ImplSide::connect(&websocket, config::APP_CONFIG.convert_self).await?;
                 wss::sdk::SdkSide::start(&websocket).await?;
             }
         }

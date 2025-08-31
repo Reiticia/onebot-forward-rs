@@ -222,7 +222,7 @@ impl SdkSide {
     }
 
     /// 将消息广播给所有客户端
-    pub async fn broadcast_message(msg: Event) -> anyhow::Result<()> {
+    pub async fn broadcast_message(msg: &mut Event) -> anyhow::Result<()> {
         trace!("broadcast event: {:?}", msg);
         let msg = serde_json::to_string(&msg)?;
         let msg = Message::Text(msg.into());

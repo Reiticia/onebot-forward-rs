@@ -10,9 +10,6 @@
 
 * app.yaml/app.yml 示例
 
-## TODO
-
-- [ ] 处理自身消息
 
 ```yaml
 websocket:
@@ -52,6 +49,7 @@ super_users:
   - 789012
 
 config_db_url: sqlite://forward.sqlite?mode=rwc
+convert_self: false
 ```
 
 * app.json 示例
@@ -95,7 +93,8 @@ config_db_url: sqlite://forward.sqlite?mode=rwc
     }
   },
   "super_users": [123456, 789012],
-  "config_db_url": "sqlite://forward.sqlite?mode=rwc"
+  "config_db_url": "sqlite://forward.sqlite?mode=rwc",
+  "convert_self": false
 }
 ```
 
@@ -105,6 +104,7 @@ config_db_url: sqlite://forward.sqlite?mode=rwc
 super_users = [123456, 789012]
 config_db_url = "sqlite://forward.sqlite?mode=rwc"
 default_policy = "deny"
+convert_self = false
 
 [websocket]
 [websocket.server]

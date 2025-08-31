@@ -51,6 +51,7 @@ pub struct AppConfig {
     pub notice: Option<EmailNoticeConfig>,
     pub super_users: Vec<i64>,
     pub config_db_url: Option<String>,
+    pub convert_self: Option<bool>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone, Default)]

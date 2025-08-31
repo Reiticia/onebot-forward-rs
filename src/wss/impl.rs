@@ -45,6 +45,7 @@ pub struct ImplSide {
 
 static IMPL_SIDE: LazyLock<RwLock<ImplSide>> = LazyLock::new(|| RwLock::new(ImplSide::default()));
 static LAST_HEARTBEAT_TIME: AtomicI64 = AtomicI64::new(0);
+static CONVERT_SELF: OnceLock<bool> = OnceLock::new();
 static HEARTBEAT_INTERVAL: OnceLock<i64> = OnceLock::new();
 static ECHO_TX_MAP: LazyLock<EchoTxMap> = LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 /// 是否为连接断开，用于决定在连接断开后重连时是否发送邮件
@@ -52,8 +53,9 @@ static DISCONNECT: AtomicBool = AtomicBool::new(false);
 
 impl ImplSide {
     /// 创建WS连接
-    pub async fn connect(websocket: &WebSocketConfig) -> anyhow::Result<()> {
+    pub async fn connect(websocket: &WebSocketConfig, convert_self: Option<bool>) -> anyhow::Result<()> {
         info!("start websocket client mode");
+        CONVERT_SELF.get_or_init(|| convert_self.unwrap_or_default());
         let url = websocket.client_url();
         let secret = websocket.client.secret.clone();
         HEARTBEAT_INTERVAL.get_or_init(|| websocket.heartbeat);
@@ -164,7 +166,7 @@ impl ImplSide {
 
     /// 处理消息
     async fn handle_message(msg: &str, active: Arc<AtomicBool>) -> anyhow::Result<()> {
-        if let Ok(event) = serde_json::from_str::<Event>(msg) {
+        if let Ok(ref mut event) = serde_json::from_str::<Event>(msg) {
             if event.post_type == "meta_event"
                 && event.meta_event_type == Some("lifecycle".into())
                 && event.sub_type == Some("connect".into())
@@ -243,6 +245,14 @@ impl ImplSide {
             if !DatabaseCache::send_by_auth(event.group_id, event.user_id).await {
                 return Ok(());
             }
+            // 此处判断是否为自身消息且是否需要转换自身消息
+            if let Some(enable) = CONVERT_SELF.get()
+                && *enable
+                && event.post_type == "message_sent"
+            {
+                event.post_type = "message".into();
+            }
+
             SdkSide::broadcast_message(event).await?;
         }
         if let Ok(resposne) = serde_json::from_str::<ApiResponse>(msg) {
@@ -276,8 +286,8 @@ impl ImplSide {
     /// 检测心跳
     async fn heartbeat_active(active: Arc<AtomicBool>) {
         info!("start heartbeat active task");
+        let heartbeat_time = *HEARTBEAT_INTERVAL.get().unwrap();
         loop {
-            let heartbeat_time = *HEARTBEAT_INTERVAL.get().unwrap();
             let last_heartbeat = LAST_HEARTBEAT_TIME.load(Ordering::SeqCst);
             let last_heartbeat = UNIX_EPOCH + Duration::from_secs(last_heartbeat as u64);
             match SystemTime::now().duration_since(last_heartbeat) {
