@@ -85,13 +85,11 @@ impl ImplSide {
                             },
                             Err(err) => error!("Connection error: {}", err),
                         }
-                        if let Some(ref notice) = is_notice {
-                            if DISCONNECT.load(Ordering::SeqCst) {
-                                if let Err(err) = send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await {
+                        if let Some(ref notice) = is_notice
+                            && DISCONNECT.load(Ordering::SeqCst)
+                                && let Err(err) = send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await {
                                     error!("email send fail: {:?}", err);
                                 }
-                            }
-                        }
                         IMPL_SIDE.write().await.writer = None;
                         IMPL_SIDE.write().await.user_id = None;
                         info!("server end connection, try to reconnect");
@@ -203,42 +201,41 @@ impl ImplSide {
                 return Ok(());
             }
             // 判断超级管理员，若是，尝试解析指令
-            if event.post_type == "message" {
-                if let Some(user_id) = event.user_id {
-                    // 如果是超级管理员，则匹配请求命令
-                    if config::APP_CONFIG.super_users.contains(&user_id) {
-                        if let Ok(command) =
-                            BWListCli::parse_command(event.raw_message.clone().unwrap_or_default().as_str())
-                        {
-                            let response = command.execute().await?;
-                            let resp_str = format!(
-                                "{}操作{}\n结果：{}",
-                                response.action,
-                                if response.success { "成功" } else { "失败" },
-                                response.data
-                            );
-                            let api = if let Some(group_id) = event.group_id {
-                                Api {
-                                    action: "send_group_msg".into(),
-                                    params: serde_json::from_str(&format!(
-                                        r#"{{"group_id": {}, "message": [{{"type": "text", "data": {{ "text": {:?} }}}}]}}"#,
-                                        group_id, resp_str
-                                    ))?,
-                                    echo: None,
-                                }
-                            } else {
-                                Api {
-                                    action: "send_private_msg".into(),
-                                    params: serde_json::from_str(&format!(
-                                        r#"{{"user_id": {}, "message": [{{"type": "text", "data": {{ "text": {:?} }}}}]}}"#,
-                                        user_id, resp_str
-                                    ))?,
-                                    echo: None,
-                                }
-                            };
-                            Self::send(api).await?;
+            if event.post_type == "message"
+                && let Some(user_id) = event.user_id
+            {
+                // 如果是超级管理员，则匹配请求命令
+                if config::APP_CONFIG.super_users.contains(&user_id)
+                    && let Ok(command) =
+                        BWListCli::parse_command(event.raw_message.clone().unwrap_or_default().as_str())
+                {
+                    let response = command.execute().await?;
+                    let resp_str = format!(
+                        "{}操作{}\n结果：{}",
+                        response.action,
+                        if response.success { "成功" } else { "失败" },
+                        response.data
+                    );
+                    let api = if let Some(group_id) = event.group_id {
+                        Api {
+                            action: "send_group_msg".into(),
+                            params: serde_json::from_str(&format!(
+                                r#"{{"group_id": {}, "message": [{{"type": "text", "data": {{ "text": {:?} }}}}]}}"#,
+                                group_id, resp_str
+                            ))?,
+                            echo: None,
                         }
-                    }
+                    } else {
+                        Api {
+                            action: "send_private_msg".into(),
+                            params: serde_json::from_str(&format!(
+                                r#"{{"user_id": {}, "message": [{{"type": "text", "data": {{ "text": {:?} }}}}]}}"#,
+                                user_id, resp_str
+                            ))?,
+                            echo: None,
+                        }
+                    };
+                    Self::send(api).await?;
                 }
             }
 

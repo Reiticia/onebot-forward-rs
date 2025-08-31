@@ -10,6 +10,10 @@
 
 * app.yaml/app.yml 示例
 
+## TODO
+
+- [ ] 处理自身消息
+
 ```yaml
 websocket:
   server:

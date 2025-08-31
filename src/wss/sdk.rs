@@ -60,12 +60,11 @@ impl SdkSide {
         loop {
             tokio::select! {
                 Ok((stream, addr)) = listener.accept() => {
-                    if let Some(ref secret) = secret {
-                        if !Self::validate_headers(&stream, secret).await {
+                    if let Some(ref secret) = secret
+                        && !Self::validate_headers(&stream, secret).await {
                             error!("token invalid");
                             continue;
                         }
-                    }
                     tokio::spawn(Self::handle_connection(stream, addr));
                 },
                 _ = ctrl_c_signal!() => {
@@ -197,21 +196,21 @@ impl SdkSide {
                     .write()
                     .await
                     .insert(echo.clone().unwrap_or_default(), api_str.clone());
-                if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64()) {
-                    if !DatabaseCache::send_by_auth(group_id, None).await {
-                        SAME_API.write().await.insert(api_str, false);
-                        return Ok(());
-                    }
+                if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64())
+                    && !DatabaseCache::send_by_auth(group_id, None).await
+                {
+                    SAME_API.write().await.insert(api_str, false);
+                    return Ok(());
                 }
                 SAME_API.write().await.insert(api_str, true);
             }
         }
 
         // 黑白名单过滤
-        if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64()) {
-            if !DatabaseCache::send_by_auth(group_id, None).await {
-                return Ok(());
-            }
+        if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64())
+            && !DatabaseCache::send_by_auth(group_id, None).await
+        {
+            return Ok(());
         }
 
         ws_server
