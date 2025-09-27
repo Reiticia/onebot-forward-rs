@@ -1,6 +1,6 @@
 [package]
 name = "onebot-forward-rs"
-version = "0.9.1"
+version = "1.0.0"
 edition = "2024"
 repository = "https://github.com/reine-ishyanami/onebot-forword-rs"
 description = "Onebot protocol forward server written in Rust"
