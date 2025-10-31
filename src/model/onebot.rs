@@ -41,6 +41,7 @@ pub struct Event {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct TestMessage {
     pub r#type: MessageType,
     #[serde(flatten)]
@@ -49,6 +50,7 @@ pub struct TestMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
 pub enum MessageType {
     Test,
 }

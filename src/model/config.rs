@@ -148,14 +148,47 @@ impl AppConfig {
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct WebSocketConfig {
     pub server: Server,
-    pub client: Server,
+    pub client: ServerConfig,
     pub heartbeat: i64,
 }
 
 impl WebSocketConfig {
-    pub fn client_url(&self) -> String {
-        format!("ws://{}:{}", self.client.host, self.client.port)
+    pub fn client_url(&self, index: u32) -> String {
+        match &self.client {
+            ServerConfig::Single(server) => {
+                format!("ws://{}:{}", server.host, server.port)
+            }
+            ServerConfig::Failover(servers) => {
+                if let Some(server) = servers.get(index as usize % servers.len()) {
+                    let url = format!("ws://{}:{}", server.host, server.port);
+                    info!("failover switch to {}", url);
+                    url
+                } else {
+                    "".into()
+                }
+            }
+        }
     }
+    pub fn client_secret(&self, index: u32) -> Option<String> {
+        match &self.client {
+            ServerConfig::Single(server) => server.secret.clone(),
+            ServerConfig::Failover(servers) => {
+                if let Some(server) = servers.get(index as usize % servers.len()) {
+                    server.secret.clone()
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerConfig {
+    Single(Server),
+    Failover(Vec<Server>),
+    // LoadBalance(Vec<Server>),
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -164,6 +197,7 @@ pub struct Server {
     pub port: u16,
     pub secret: Option<String>,
 }
+
 #[derive(serde::Deserialize, Debug, Clone, Default)]
 pub struct LoggerConfig {
     pub level: LogLevel,

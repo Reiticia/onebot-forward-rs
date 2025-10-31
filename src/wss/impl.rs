@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, LazyLock, OnceLock,
-        atomic::{AtomicBool, AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering},
     },
     time::{self, Duration, SystemTime, UNIX_EPOCH},
 };
@@ -56,14 +56,16 @@ impl ImplSide {
     pub async fn connect(websocket: &WebSocketConfig, convert_self: Option<bool>) -> anyhow::Result<()> {
         info!("start websocket client mode");
         CONVERT_SELF.get_or_init(|| convert_self.unwrap_or_default());
-        let url = websocket.client_url();
-        let secret = websocket.client.secret.clone();
         HEARTBEAT_INTERVAL.get_or_init(|| websocket.heartbeat);
         let is_notice = config::APP_CONFIG.get_notice();
         info!("try to connect to server");
 
+        let index = AtomicU32::new(0);
+        let websocket = websocket.clone();
         tokio::spawn(async move {
             loop {
+                let url = websocket.client_url(index.load(Ordering::SeqCst));
+                let secret = websocket.client_secret(index.load(Ordering::SeqCst)).clone();
                 let mut request = url.as_str().into_client_request().unwrap();
                 if let Some(ref secret) = secret {
                     let access_token = format!("Bearer {}", secret);
@@ -87,6 +89,7 @@ impl ImplSide {
                             },
                             Err(err) => error!("Connection error: {}", err),
                         }
+                        // 连接中断
                         if let Some(ref notice) = is_notice
                             && DISCONNECT.load(Ordering::SeqCst)
                                 && let Err(err) = send_email(notice.clone(), &IMPL_SIDE.read().await.user_id.unwrap_or(0).to_string()).await {
@@ -94,6 +97,7 @@ impl ImplSide {
                                 }
                         IMPL_SIDE.write().await.writer = None;
                         IMPL_SIDE.write().await.user_id = None;
+                        index.fetch_add(1, Ordering::SeqCst);
                         info!("server end connection, try to reconnect");
                     },
                     _ = sleep_task => {
