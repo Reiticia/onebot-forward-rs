@@ -26,7 +26,7 @@ use crate::{
     ctrl_c_signal,
     model::onebot::{Api, ApiResponse, ConnectMessage, Event},
     utils::DatabaseCache,
-    wss::r#impl::ImplSide,
+    wss::r#impl::{ImplSide, ImplSideTrait},
 };
 
 pub type Writer = SplitSink<WebSocketStream<TcpStream>, Message>;

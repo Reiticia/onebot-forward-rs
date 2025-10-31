@@ -153,33 +153,47 @@ pub struct WebSocketConfig {
 }
 
 impl WebSocketConfig {
-    pub fn client_url(&self, index: u32) -> String {
+    /// 获取连接模式，false 表示同一时间只存在单个连接 ，true 表示可以同时存在多个连接
+    pub fn is_multi_connect_model(&self) -> bool {
         match &self.client {
-            ServerConfig::Single(server) => {
-                format!("ws://{}:{}", server.host, server.port)
-            }
+            ServerConfig::Single(_) | ServerConfig::Failover(_) => false,
+            ServerConfig::LoadBalance(_) => true,
+        }
+    }
+
+    pub fn client_url(&self, index: u32) -> (String, Option<String>) {
+        match &self.client {
+            ServerConfig::Single(server) => (format!("ws://{}:{}", server.host, server.port), server.secret.clone()),
             ServerConfig::Failover(servers) => {
                 if let Some(server) = servers.get(index as usize % servers.len()) {
                     let url = format!("ws://{}:{}", server.host, server.port);
                     info!("failover switch to {}", url);
-                    url
+                    (url, server.secret.clone())
                 } else {
-                    "".into()
+                    ("".into(), None)
                 }
             }
+            ServerConfig::LoadBalance(_) => panic!("LoadBalance模式下不应调用此方法"),
         }
     }
-    pub fn client_secret(&self, index: u32) -> Option<String> {
+
+    pub fn client_urls(&self) -> Vec<(String, Option<String>)> {
         match &self.client {
-            ServerConfig::Single(server) => server.secret.clone(),
-            ServerConfig::Failover(servers) => {
-                if let Some(server) = servers.get(index as usize % servers.len()) {
-                    server.secret.clone()
-                } else {
-                    None
-                }
+            ServerConfig::Single(_) | ServerConfig::Failover(_) => {
+                panic!("非LoadBalance模式下不应调用此方法")
             }
+            ServerConfig::LoadBalance(servers) => servers
+                .iter()
+                .map(|server| (format!("ws://{}:{}", server.host, server.port), server.secret.clone()))
+                .collect(),
         }
+    }
+
+    pub fn get_multi_connect_config(&self) -> Vec<Server> {
+        let ServerConfig::LoadBalance(servers) = &self.client else {
+            panic!("非LoadBalance模式下不应调用此方法")
+        };
+        servers.clone()
     }
 }
 
@@ -188,7 +202,7 @@ impl WebSocketConfig {
 pub enum ServerConfig {
     Single(Server),
     Failover(Vec<Server>),
-    // LoadBalance(Vec<Server>),
+    LoadBalance(Vec<Server>),
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]

@@ -9,6 +9,7 @@ use model::config;
 use clap::{Parser, Subcommand};
 
 use crate::utils::send_email_with_template;
+use crate::wss::r#impl::ImplSideTrait;
 
 // 顶层命令行结构
 #[derive(Parser, Debug)]
