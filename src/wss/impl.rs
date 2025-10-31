@@ -24,7 +24,7 @@ pub trait ImplSideTrait {
     /// 建立连接
     async fn connect(websocket: &WebSocketConfig, convert_self: Option<bool>) -> anyhow::Result<()>;
     /// 判断协议端是否存活
-    async fn alive() -> Option<i64>;
+    async fn alive() -> Vec<Option<i64>>;
     /// 发送消息
     async fn send(data: Api) -> anyhow::Result<()>;
 }
@@ -41,7 +41,7 @@ impl ImplSideTrait for ImplSide {
     }
 
     /// 判断协议端是否存活
-    async fn alive() -> Option<i64> {
+    async fn alive() -> Vec<Option<i64>> {
         let connect_model = CONNECT_MODEL.get().unwrap();
         if *connect_model {
             MultiImplSide::alive().await

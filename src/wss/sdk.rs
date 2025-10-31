@@ -32,7 +32,7 @@ use crate::{
 pub type Writer = SplitSink<WebSocketStream<TcpStream>, Message>;
 pub type Reader = SplitStream<WebSocketStream<TcpStream>>;
 
-static SDK_SIDE: LazyLock<SdkSide> = LazyLock::new(|| SdkSide::default());
+static SDK_SIDE: LazyLock<SdkSide> = LazyLock::new(SdkSide::default);
 
 #[derive(Debug, Default)]
 pub struct SdkSide {
@@ -121,7 +121,7 @@ impl SdkSide {
     /// 处理连接
     async fn handle_connect(reader: &mut Reader, writer: Arc<RwLock<Writer>>) -> anyhow::Result<()> {
         // 判断协议端是否以及连接，如果协议端已连接，则推送连接成功消息给客户端
-        if let Some(user_id) = ImplSide::alive().await {
+        for user_id in (ImplSide::alive().await).into_iter().flatten() {
             let msg = ConnectMessage::new(user_id);
             let msg = serde_json::to_string(&msg)?;
             let message = Message::Text(msg.into());

@@ -45,13 +45,13 @@ pub struct SingleImplSide {
     convert_self: OnceLock<bool>,
     /// 心跳间隔时间，单位秒
     heartbeat_interval: OnceLock<i64>,
-    /// 每一个echo标识对应不同的响应，用于减少重复的协议端API调用
+    /// 程序内部发起的API调用对应echo与其响应通道映射
     echo_tx_map: EchoTxMap,
     /// 是否为连接断开，用于决定在连接断开后重连时是否发送邮件
     disconnect: AtomicBool,
 }
 
-static SINGLE_IMPL_SIDE: LazyLock<SingleImplSide> = LazyLock::new(|| SingleImplSide::default());
+static SINGLE_IMPL_SIDE: LazyLock<SingleImplSide> = LazyLock::new(SingleImplSide::default);
 
 impl ImplSideTrait for SingleImplSide {
     async fn connect(websocket: &WebSocketConfig, convert_self: Option<bool>) -> anyhow::Result<()> {
@@ -113,8 +113,8 @@ impl ImplSideTrait for SingleImplSide {
         });
         Ok(())
     }
-    async fn alive() -> Option<i64> {
-        *SINGLE_IMPL_SIDE.user_id.read().await
+    async fn alive() -> Vec<Option<i64>> {
+        vec![*SINGLE_IMPL_SIDE.user_id.read().await]
     }
     async fn send(data: Api) -> anyhow::Result<()> {
         trace!("invoke api: {:?}", data);

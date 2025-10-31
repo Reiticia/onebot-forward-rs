@@ -188,13 +188,6 @@ impl WebSocketConfig {
                 .collect(),
         }
     }
-
-    pub fn get_multi_connect_config(&self) -> Vec<Server> {
-        let ServerConfig::LoadBalance(servers) = &self.client else {
-            panic!("非LoadBalance模式下不应调用此方法")
-        };
-        servers.clone()
-    }
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
