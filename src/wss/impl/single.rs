@@ -5,7 +5,7 @@ use std::{
         Arc, LazyLock, OnceLock,
         atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering},
     },
-    time::{self, Duration, SystemTime, UNIX_EPOCH},
+    time::{self, Duration, SystemTime, UNIX_EPOCH}, usize,
 };
 
 use futures_util::{SinkExt, stream::StreamExt};
@@ -113,8 +113,8 @@ impl ImplSideTrait for SingleImplSide {
         });
         Ok(())
     }
-    async fn alive() -> Option<i64> {
-        *SINGLE_IMPL_SIDE.user_id.read().await
+    async fn alive() -> Vec<Option<i64>> {
+        vec![*SINGLE_IMPL_SIDE.user_id.read().await]
     }
     async fn send(data: Api) -> anyhow::Result<()> {
         trace!("invoke api: {:?}", data);
