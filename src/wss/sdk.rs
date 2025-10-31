@@ -32,17 +32,19 @@ use crate::{
 pub type Writer = SplitSink<WebSocketStream<TcpStream>, Message>;
 pub type Reader = SplitStream<WebSocketStream<TcpStream>>;
 
-static SDK_SIDE: LazyLock<RwLock<SdkSide>> = LazyLock::new(|| RwLock::new(SdkSide::default()));
+static SDK_SIDE: LazyLock<SdkSide> = LazyLock::new(|| SdkSide::default());
 
 #[derive(Debug, Default)]
 pub struct SdkSide {
-    pub writers_map: HashMap<String, Arc<RwLock<Writer>>>,
-    pub echo_map: HashMap<String, Arc<RwLock<Writer>>>,
+    /// 远程地址对应Writter，用于向对应客户端发送消息 addr str -> Writer
+    pub writers_map: RwLock<HashMap<String, Arc<RwLock<Writer>>>>,
+    /// echo对应的Writer，用于将API调用结果返回给调用方 echo str -> Writer
+    pub echo_map: RwLock<HashMap<String, Arc<RwLock<Writer>>>>,
+    /// API调用记录，用于去重短时间内重复的API调用请求 echo str -> api json str
+    pub api_invoke_cache_map: RwLock<HashMap<String, String>>,
+    /// API调用请求JSON对应其是否通过黑白名单鉴权，用于去重短时间内重复的API调用请求 api json str -> is_auth bool
+    pub same_api_map: RwLock<HashMap<String, bool>>,
 }
-
-static SAME_API: LazyLock<Arc<RwLock<HashMap<String, bool>>>> = LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-static ECHO_MAP: LazyLock<Arc<RwLock<HashMap<String, String>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 impl SdkSide {
     /// 创建WS服务
@@ -108,9 +110,9 @@ impl SdkSide {
         let (outgoing, mut incoming) = ws_stream.split();
         let writer = Arc::new(RwLock::new(outgoing));
         SDK_SIDE
+            .writers_map
             .write()
             .await
-            .writers_map
             .insert(addr.to_string(), writer.clone());
 
         tokio::spawn(async move { Self::handle_connect(&mut incoming, writer).await });
@@ -163,7 +165,7 @@ impl SdkSide {
             }
         }
         // 删除对应客户端
-        SDK_SIDE.write().await.writers_map.retain(|k, w| {
+        SDK_SIDE.writers_map.write().await.retain(|k, w| {
             if Arc::ptr_eq(w, &writer) {
                 info!("remove client: {}", k);
                 false
@@ -178,7 +180,6 @@ impl SdkSide {
     async fn handle_message(msg: &str, writer: Arc<RwLock<Writer>>) -> anyhow::Result<()> {
         let api = serde_json::from_str::<Api>(msg)?;
         let echo = &api.echo;
-        let mut ws_server = SDK_SIDE.write().await;
 
         // 所有重复的API请求只做一次鉴权
         {
@@ -186,23 +187,24 @@ impl SdkSide {
             let echo = echo.clone();
             api_clone.echo = None;
             let api_str = serde_json::to_string(&api_clone)?;
-            if let Some(res) = SAME_API.read().await.get(&api_str) {
+            if let Some(res) = SDK_SIDE.same_api_map.read().await.get(&api_str) {
                 if !res {
                     return Ok(());
                 }
             } else {
                 // 黑白名单过滤
-                ECHO_MAP
+                SDK_SIDE
+                    .api_invoke_cache_map
                     .write()
                     .await
                     .insert(echo.clone().unwrap_or_default(), api_str.clone());
                 if let Some(group_id) = api.params.get("group_id").map(|v| v.as_i64())
                     && !DatabaseCache::send_by_auth(group_id, None).await
                 {
-                    SAME_API.write().await.insert(api_str, false);
+                    SDK_SIDE.same_api_map.write().await.insert(api_str, false);
                     return Ok(());
                 }
-                SAME_API.write().await.insert(api_str, true);
+                SDK_SIDE.same_api_map.write().await.insert(api_str, true);
             }
         }
 
@@ -213,8 +215,10 @@ impl SdkSide {
             return Ok(());
         }
 
-        ws_server
+        SDK_SIDE
             .echo_map
+            .write()
+            .await
             .insert(echo.clone().unwrap_or_default(), writer.clone());
         // 将消息发送给对应 OneBot 协议端
         ImplSide::send(api).await?;
@@ -226,7 +230,7 @@ impl SdkSide {
         trace!("broadcast event: {:?}", msg);
         let msg = serde_json::to_string(&msg)?;
         let msg = Message::Text(msg.into());
-        for (_, writer) in SDK_SIDE.read().await.writers_map.clone() {
+        for (_, writer) in SDK_SIDE.writers_map.read().await.clone() {
             writer.write().await.send(msg.clone()).await?;
         }
         Ok(())
@@ -236,16 +240,15 @@ impl SdkSide {
     pub async fn response_message(msg: ApiResponse) -> anyhow::Result<()> {
         trace!("feedback response: {:?}", msg);
         if let Some(echo) = &msg.echo {
-            let mut ws_server = SDK_SIDE.write().await;
-            if let Some(writer) = ws_server.echo_map.remove(echo) {
+            if let Some(writer) = SDK_SIDE.echo_map.write().await.remove(echo) {
                 writer
                     .write()
                     .await
                     .send(Message::Text(serde_json::to_string(&msg)?.into()))
                     .await?;
             }
-            if let Some(api_str) = ECHO_MAP.write().await.remove(echo) {
-                SAME_API.write().await.remove(&api_str);
+            if let Some(api_str) = SDK_SIDE.api_invoke_cache_map.write().await.remove(echo) {
+                SDK_SIDE.same_api_map.write().await.remove(&api_str);
             }
         }
         Ok(())
